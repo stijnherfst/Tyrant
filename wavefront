@@ -1,0 +1,187 @@
+#include "stdafx.h"
+
+#include "helper_math.h"
+#include "assert_cuda.h"
+#include "vector_types.h"
+#include "cuda_surface_types.h"
+#include "surface_functions.h"
+#include "variables.h"
+#include "glm.hpp"
+#include "device_launch_parameters.h"
+
+surface<void, cudaSurfaceType2D> surf;
+
+#define samps 1
+
+struct Ray {
+	float3 orig; // ray origin
+	float3 dir;  // ray direction 
+	__device__ Ray(float3 o_, float3 d_) : orig(o_), dir(d_) {}
+};
+
+enum Refl_t { DIFF, SPEC, REFR };  // material types, used in radiance(), only DIFF used here
+
+struct Sphere {
+	float rad;            // radius 
+	float3 pos, emi, col; // position, emission, colour 
+	Refl_t refl;          // reflection type (e.g. diffuse)
+
+	__device__ float intersect_sphere(const Ray &r) const {
+		float3 op = pos - r.orig;    // distance from ray.orig to center sphere 
+		float t;  // epsilon required to prevent floating point precision artefacts
+		float b = dot(op, r.dir);    // b in quadratic equation
+		float disc = b * b - dot(op, op) + rad * rad;  // discriminant quadratic equation
+		if (disc < 0) return 0;       // if disc < 0, no real solution (we're not interested in complex roots) 
+		else disc = sqrtf(disc);    // if disc >= 0, check for solutions using negative and positive discriminant
+		return (t = b - disc) > 0.0001f ? t : ((t = b + disc)> 0.0001f ? t : 0); // pick closest point in front of ray origin
+	}
+};
+
+__constant__ Sphere spheres[] = {
+	{ 1e5f,{ 1e5f + 1.0f, 40.8f, 81.6f },{ 0.0f, 0.0f, 0.0f },{ 0.75f, 0.25f, 0.25f }, DIFF }, //Left 
+{ 1e5f,{ -1e5f + 99.0f, 40.8f, 81.6f },{ 0.0f, 0.0f, 0.0f },{ .25f, .25f, .75f }, DIFF }, //Right 
+{ 1e5f,{ 50.0f, 40.8f, 1e5f },{ 0.0f, 0.0f, 0.0f },{ .75f, .75f, .75f }, DIFF }, //Back 
+{ 1e5f,{ 50.0f, 40.8f, -1e5f + 600.0f },{ 0.0f, 0.0f, 0.0f },{ 1.00f, 1.00f, 1.00f }, DIFF }, //Frnt 
+{ 1e5f,{ 50.0f, 1e5f, 81.6f },{ 0.0f, 0.0f, 0.0f },{ .75f, .75f, .75f }, DIFF }, //Botm 
+{ 1e5f,{ 50.0f, -1e5f + 81.6f, 81.6f },{ 0.0f, 0.0f, 0.0f },{ .75f, .75f, .75f }, DIFF }, //Top 
+{ 16.5f,{ 27.0f, 16.5f, 47.0f },{ 0.0f, 0.0f, 0.0f },{ 1.0f, 1.0f, 1.0f }, DIFF }, // small sphere 1
+{ 16.5f,{ 73.0f, 16.5f, 78.0f },{ 0.0f, 0.0f, 0.0f },{ 1.0f, 1.0f, 1.0f }, DIFF }, // small sphere 2
+{ 600.0f,{ 50.0f, 681.6f - .77f, 81.6f },{ 2.0f, 1.8f, 1.6f },{ 0.0f, 0.0f, 0.0f }, DIFF }  // Light
+};
+
+__device__ inline bool intersect_scene(const Ray &r, float &t, int &id) {
+	float n = sizeof(spheres) / sizeof(Sphere), d, inf = t = 1e20;  // t is distance to closest intersection, initialise t to a huge number outside scene
+	for (int i = int(n); i--;)  // test all scene objects for intersection
+		if ((d = spheres[i].intersect_sphere(r)) && d<t) {  // if newly computed intersection distance d is smaller than current closest intersection distance
+			t = d;  // keep track of distance along ray to closest intersection point 
+			id = i; // and closest intersected object
+		}
+	return t<inf; // returns true if an intersection with the scene occurred, false when no hit
+}
+
+__device__ uint RandomInt(uint& seed) {
+	seed ^= seed << 13;
+	seed ^= seed >> 17;
+	seed ^= seed << 5;
+	return seed;
+}
+
+__device__ float RandomFloat(uint& seed) {
+	return RandomInt(seed) * 2.3283064365387e-10f;
+}
+
+__device__ float3 radiance(Ray &r, uint& seed) { // returns ray color
+	float3 accucolor = make_float3(0.0f, 0.0f, 0.0f);
+	float3 mask = make_float3(1.0f, 1.0f, 1.0f);
+
+	for (int bounces = 0; bounces < 4; bounces++) {
+		float t;
+		int id = 0;
+
+		if (!intersect_scene(r, t, id))
+			return make_float3(0.0f, 0.0f, 0.0f);
+
+		Sphere &obj = spheres[id];  // hitobject
+		float3 x = r.orig + r.dir*t;          // hitpoint 
+		float3 n = normalize(x - obj.pos);    // normal
+		float3 nl = dot(n, r.dir) < 0 ? n : n * -1; // front facing normal
+
+		accucolor += mask * obj.emi;
+
+		// all spheres in the scene are diffuse
+		// diffuse material reflects light uniformly in all directions
+		// generate new diffuse ray:
+		// origin = hitpoint of previous ray in path
+		// random direction in hemisphere above hitpoint (see "Realistic Ray Tracing", P. Shirley)
+
+		float r1 = 2 * 3.1415926535 * RandomFloat(seed); // pick random number on unit circle (radius = 1, circumference = 2*Pi) for azimuth
+		float r2 = RandomFloat(seed);  // pick random number for elevation
+		float r2s = sqrtf(r2);
+
+		// compute local orthonormal basis uvw at hitpoint to use for calculation random ray direction 
+		// first vector = normal at hitpoint, second vector is orthogonal to first, third vector is orthogonal to first two vectors
+		float3 w = nl;
+		float3 u = normalize(cross((fabs(w.x) > .1 ? make_float3(0, 1, 0) : make_float3(1, 0, 0)), w));
+		float3 v = cross(w, u);
+
+		// compute random ray direction on hemisphere using polar coordinates
+		// cosine weighted importance sampling (favours ray directions closer to normal direction)
+		float3 d = normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrtf(1 - r2));
+
+		r.orig = x + nl * 0.05f; // offset ray origin slightly to prevent self intersection
+		r.dir = d;
+
+		mask *= obj.col;      
+		mask *= dot(d, nl);  // weigh light contribution using cosine of angle between incident light and normal
+		mask *= 2;          // fudge factor
+	}
+
+	return accucolor;
+}
+
+__global__ void primary_rays(RayQueue* queue, float3 camera_right, float3 camera_up, float3 camera_direction, float3 O, unsigned int start_index) {
+	int blockId = blockIdx.x + blockIdx.y * gridDim.x;
+	int threadId = blockId * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x) + threadIdx.x;
+
+	const int x = threadId % render_width;
+	const int y = threadId / render_width;
+
+	const double normalized_i = (x / (double)render_width) - 0.5;
+	const double normalized_j = (y / (double)render_height) - 0.5;
+
+	float3 direction = camera_direction + normalized_i * camera_right + normalized_j * camera_up;
+	direction = normalize(direction);
+	
+	const int index = (y * render_width + x);// > 999'999 ? 0 : (y * render_width + x);
+	queue[index] = { O, direction, 0, x, y};
+}
+
+__global__ void (RayQueue* queue, unsigned int frame) {
+	int blockId = blockIdx.x + blockIdx.y * gridDim.x;
+	int threadId = blockId * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x) + threadIdx.x;
+
+	RayQueue& ray = queue[threadId];
+
+	unsigned int seed = (frame + ray.x * 147565741) * 720898027 * ray.y;
+
+	float3 r = make_float3(0.0f);
+	for (int s = 0; s < samps; s++) {
+		r += radiance(Ray(ray.origin + ray.direction, ray.direction), seed) * (1.0 / samps);
+	}
+
+	surf2Dwrite(make_float4(r.x, r.y, r.z, 1), surf, ray.x * sizeof(float4), ray.y, cudaBoundaryModeZero);
+}
+
+cudaError_t pxl_kernel_launcher(cudaArray_const_t array, cudaEvent_t event,	cudaStream_t stream, RayQueue* queue) {
+	cudaError_t cuda_err;
+
+	// cuda_err = cudaEventRecord(event,stream);
+
+	cuda_err = cuda(BindSurfaceToArray(surf, array));
+
+	if (cuda_err)
+		return cuda_err;
+
+	// cuda_err = cudaEventRecord(event,stream);
+	
+	const glm::vec3 camera_right = glm::normalize(glm::cross(camera.direction, camera.up));
+	const glm::vec3 camera_up = glm::normalize(glm::cross(camera_right, camera.direction));
+
+	float3 right = { camera_right.x, camera_right.y, camera_right.z };
+	float3 up = { camera_up.x ,camera_up.y, camera_up.z };
+	float3 direction = { camera.direction.x, camera.direction.y, camera.direction.z };
+	float3 pos = { camera.position.x, camera.position.y, camera.position.z };
+
+	dim3 blocks(64, 64);
+	dim3 threads(16, 16);
+	//int blocks = ray_queue_buffer_size / 256;
+
+	primary_rays <<<blocks, threads, 0, stream >>> (queue, right, up, direction, pos, 0);
+
+	extend <<<blocks, threads, 0, stream >>>(queue, frame);
+
+	frame++;
+	//cuda_err = cudaStreamWaitEvent(stream,event,0);
+
+	return cudaSuccess;
+}
