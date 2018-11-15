@@ -8,7 +8,6 @@ constexpr static unsigned window_height = 720;
 constexpr static unsigned render_width = 720;
 constexpr static unsigned render_height = 720;
 
-
 constexpr static int bvh_stack_size = 32;
 
 constexpr static float epsilon = 0.001f;
@@ -17,11 +16,11 @@ extern glm::vec2 sun_position;
 extern bool sun_position_changed;
 
 struct RayQueue {
-	glm::vec3 origin;
-	glm::vec3 direction;
-	float distance;
-	int x;
-	int y;
+  glm::vec3 origin;
+  glm::vec3 direction;
+  float distance;
+  int x;
+  int y;
 };
 
 const unsigned int ray_queue_buffer_size = 1'048'576;

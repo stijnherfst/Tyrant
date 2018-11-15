@@ -10,10 +10,12 @@
 ////
 //// Which in turn contained the following copyright info:
 //// Code adapted from Martins:
-//// http://blenderartists.org/forum/showthread.php?242940-unlimited-planar-reflections-amp-refraction-%28update%29
+////
+///http://blenderartists.org/forum/showthread.php?242940-unlimited-planar-reflections-amp-refraction-%28update%29
 ////
 //// Which in turn originates from:
-//// https://github.com/SimonWallner/kocmoc-demo/blob/RTVIS/media/shaders/sky.frag
+////
+///https://github.com/SimonWallner/kocmoc-demo/blob/RTVIS/media/shaders/sky.frag
 //// where it was MIT licensed:
 //// https://github.com/SimonWallner/kocmoc-demo/blob/RTVIS/README.rst
 //// Heavily altered by me
@@ -47,10 +49,12 @@ __device__ extern glm::vec2 SunPos;
 __device__ extern glm::vec3 sunDirection;
 
 __device__ glm::vec3 ortho(glm::vec3 v);
-__device__ glm::vec3 getConeSample(glm::vec3 dir, float extent, unsigned int& seed);
+__device__ glm::vec3 getConeSample(glm::vec3 dir, float extent,
+                                   unsigned int& seed);
 
 __device__ float RayleighPhase(float cosViewSunAngle);
-__device__ glm::vec3 totalMie(glm::vec3 primaryWavelengths, glm::vec3 K, float T);
+__device__ glm::vec3 totalMie(glm::vec3 primaryWavelengths, glm::vec3 K,
+                              float T);
 __device__ float hgPhase(float cosViewSunAngle, float g);
 __device__ float SunIntensity(float zenithAngleCos);
 glm::vec3 fromSpherical(glm::vec2 p);
