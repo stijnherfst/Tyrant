@@ -29,7 +29,9 @@
 #include "variables.h"
 #include "static_mesh.h"
 #include "loader.h"
-#include "bvh.h"
+
+//#include "Bbox.h"
+//#include "BVH.h"
 
 #include "camera.h"
 

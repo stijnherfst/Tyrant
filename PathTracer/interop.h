@@ -2,7 +2,7 @@
 
 #include <cuda_runtime.h>
 #include <stdbool.h>
-
+#include "Scene.h"
 struct pxl_interop {
   int width;
   int height;
@@ -23,7 +23,4 @@ pxl_interop* pxl_interop_create();
 
 void interop_destroy(struct pxl_interop* const interop);
 
-cudaError_t launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer,
-                           int* cudaBVHindexesOrTrilists, float* cudaBVHlimits,
-                           float* cudaTriangleIntersectionData,
-                           int* cudaTriIdxList, Triangle* triangles);
+cudaError_t launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene::GPUScene gpuScene);

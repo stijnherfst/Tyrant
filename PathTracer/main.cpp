@@ -1,11 +1,7 @@
 #include "stdafx.h"
+#include "Bbox.h"
+#include "Scene.h"
 
-Vertex* cudaVertices = nullptr;
-Triangle* cudaTriangles = nullptr;
-float* cudaTriangleIntersectionData = nullptr;
-int* cudaTriIdxList = nullptr;
-float* cudaBVHlimits = nullptr;
-int* cudaBVHindexesOrTrilists = nullptr;
 
 static void glfw_fps(GLFWwindow* window) {
   // Static fps counters
@@ -47,103 +43,6 @@ static void glfw_key_callback(GLFWwindow* window, int key, int scancode,
   }
 }
 
-void upload_cuda_data(CudaMesh cuda_mesh) {
-  // Store vertices in a GPU friendly format using float4
-
-  float* vertices = new float[cuda_mesh.verticesNo * 8];
-  for (unsigned i = 0; i < cuda_mesh.verticesNo; i++) {
-    // first float4 stores vertex xyz position
-    vertices[i * 8 + 0] = cuda_mesh.vertices[i].position.x;
-    vertices[i * 8 + 1] = cuda_mesh.vertices[i].position.y;
-    vertices[i * 8 + 2] = cuda_mesh.vertices[i].position.z;
-    vertices[i * 8 + 3] = 0.f;
-    // second float4 stores vertex normal xyz
-    vertices[i * 8 + 4] = cuda_mesh.vertices[i].normal.x;
-    vertices[i * 8 + 5] = cuda_mesh.vertices[i].normal.y;
-    vertices[i * 8 + 6] = cuda_mesh.vertices[i].normal.z;
-    vertices[i * 8 + 7] = 0.f;
-  }
-
-  // copy vertex data to CUDA global memory
-  cudaMalloc(&cudaVertices, cuda_mesh.verticesNo * 8 * sizeof(float));
-  cudaMemcpy(cudaVertices, vertices, cuda_mesh.verticesNo * 8 * sizeof(float),
-             cudaMemcpyHostToDevice);
-
-  // Store precomputed triangle intersection data in a GPU friendly format using
-  // float4
-  float* triangle_intersections = new float[cuda_mesh.trianglesNo * 20];
-
-  for (unsigned i = 0; i < cuda_mesh.trianglesNo; i++) {
-    // Normal
-    triangle_intersections[20 * i + 4] = cuda_mesh.triangles[i].normal.x;
-    triangle_intersections[20 * i + 5] = cuda_mesh.triangles[i].normal.y;
-    triangle_intersections[20 * i + 6] = cuda_mesh.triangles[i].normal.z;
-    triangle_intersections[20 * i + 7] = cuda_mesh.triangles[i]._d;
-    // Precomputed plane normal of triangle edge 1
-    triangle_intersections[20 * i + 8] = cuda_mesh.triangles[i]._e1.x;
-    triangle_intersections[20 * i + 9] = cuda_mesh.triangles[i]._e1.y;
-    triangle_intersections[20 * i + 10] = cuda_mesh.triangles[i]._e1.z;
-    triangle_intersections[20 * i + 11] = cuda_mesh.triangles[i]._d1;
-    // Precomputed plane normal of triangle edge 2
-    triangle_intersections[20 * i + 12] = cuda_mesh.triangles[i]._e2.x;
-    triangle_intersections[20 * i + 13] = cuda_mesh.triangles[i]._e2.y;
-    triangle_intersections[20 * i + 14] = cuda_mesh.triangles[i]._e2.z;
-    triangle_intersections[20 * i + 15] = cuda_mesh.triangles[i]._d2;
-    // Precomputed plane normal of triangle edge 3
-    triangle_intersections[20 * i + 16] = cuda_mesh.triangles[i]._e3.x;
-    triangle_intersections[20 * i + 17] = cuda_mesh.triangles[i]._e3.y;
-    triangle_intersections[20 * i + 18] = cuda_mesh.triangles[i]._e3.z;
-    triangle_intersections[20 * i + 19] = cuda_mesh.triangles[i]._d3;
-  }
-
-  cudaMalloc(&cudaTriangleIntersectionData,
-             cuda_mesh.trianglesNo * 20 * sizeof(float));
-  cudaMemcpy(cudaTriangleIntersectionData, triangle_intersections,
-             cuda_mesh.trianglesNo * 20 * sizeof(float),
-             cudaMemcpyHostToDevice);
-
-  cudaMalloc(&cudaTriangles, cuda_mesh.trianglesNo * sizeof(Triangle));
-  cudaMemcpy(cudaTriangles, cuda_mesh.triangles,
-             cuda_mesh.trianglesNo * sizeof(Triangle), cudaMemcpyHostToDevice);
-
-  // Allocate CUDA-side data (global memory for corresponding textures) for
-  // Bounding Volume Hierarchy data
-
-  // Leaf nodes triangle lists (indices to global triangle list)
-  cudaMalloc(&cudaTriIdxList, triangle_index_list_no * sizeof(int));
-  cudaMemcpy(cudaTriIdxList, triangle_index_list,
-             triangle_index_list_no * sizeof(int), cudaMemcpyHostToDevice);
-
-  float* limits = new float[cache_bvh_no * 6];
-
-  for (unsigned i = 0; i < cache_bvh_no; i++) {
-    // Texture-wise:
-    limits[6 * i + 0] = cache_bvh[i].bottom.x;
-    limits[6 * i + 1] = cache_bvh[i].top.x;
-    limits[6 * i + 2] = cache_bvh[i].bottom.y;
-    limits[6 * i + 3] = cache_bvh[i].top.y;
-    limits[6 * i + 4] = cache_bvh[i].bottom.z;
-    limits[6 * i + 5] = cache_bvh[i].top.z;
-  }
-
-  cudaMalloc(&cudaBVHlimits, cache_bvh_no * 6 * sizeof(float));
-  cudaMemcpy(cudaBVHlimits, limits, cache_bvh_no * 6 * sizeof(float),
-             cudaMemcpyHostToDevice);
-
-  int* indices_or_trilists = new int[cache_bvh_no * 4];
-
-  for (unsigned i = 0; i < cache_bvh_no; i++) {
-    indices_or_trilists[4 * i + 0] = cache_bvh[i].u.leaf.count;
-    indices_or_trilists[4 * i + 1] = cache_bvh[i].u.inner.idx_right;
-    indices_or_trilists[4 * i + 2] = cache_bvh[i].u.inner.idx_left;
-    indices_or_trilists[4 * i + 3] = cache_bvh[i].u.leaf.start_index_tri_list;
-  }
-
-  // copy BVH node attributes to CUDA global memory
-  cudaMalloc(&cudaBVHindexesOrTrilists, cache_bvh_no * 4 * sizeof(unsigned));
-  cudaMemcpy(cudaBVHindexesOrTrilists, indices_or_trilists,
-             cache_bvh_no * 4 * sizeof(unsigned), cudaMemcpyHostToDevice);
-}
 
 int main(int argc, char* argv[]) {
   GLFWwindow* window;
@@ -212,9 +111,11 @@ int main(int argc, char* argv[]) {
 
   glfwSetKeyCallback(window, glfw_key_callback);
 
-  CudaMesh cuda_mesh = load_object("Data/dragon.ply");
-  update_bvh(cuda_mesh, "Data/dragon.ply");
-  upload_cuda_data(cuda_mesh);
+  Scene scene;
+  scene.Load("Data/dragon.ply");
+  //CudaMesh cuda_mesh = load_object("Data/cube.ply");
+  //update_bvh(cuda_mesh, "Data/cube.ply");
+  //upload_cuda_data(cuda_mesh);
 
   // Allocate ray queue buffer
   RayQueue* ray_queue_buffer;
@@ -240,10 +141,7 @@ int main(int argc, char* argv[]) {
       sun_position_changed = true;
     }
     camera.update(window, delta);
-
-    launch_kernels(interop->ca, blit_buffer, cudaBVHindexesOrTrilists,
-                   cudaBVHlimits, cudaTriangleIntersectionData, cudaTriIdxList,
-                   cudaTriangles);
+    launch_kernels(interop->ca, blit_buffer, scene.gpuScene);
 
     interop->blit();
 

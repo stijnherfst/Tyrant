@@ -1,40 +1,44 @@
 #pragma once
-
+#include "Rays.h"
+#include "variables.h"
 struct Vertex {
-	glm::vec3 position;
-	glm::vec3 normal;
+  glm::vec3 position;
+  glm::vec3 normal;
 
-	Vertex() = default;
-	Vertex(float x, float y, float z, float nx, float ny, float nz) : position( x, y, z ), normal(glm::vec3( nx, ny, nz )) {}
+  Vertex() = default;
+  Vertex(float x, float y, float z, float nx, float ny, float nz)
+      : position(x, y, z), normal(glm::vec3(nx, ny, nz)) {}
 };
 
 struct Triangle {
-	unsigned index1;
-	unsigned index2;
-	unsigned index3;
-	glm::vec3 color;
-	glm::vec3 normal;
-	bool fake;
-	float _d, _d1, _d2, _d3;
-	glm::vec3 _e1, _e2, _e3;
-	glm::vec3 bottom;
-	glm::vec3 top;
+  glm::vec3 vert;
+  glm::vec3 e1, e2;
+  glm::vec3 color{1.0f, 0.8f, 0.1f};
+  uint8_t materialType{};
+  // HACK to align to 64 bytes since __align__ doesn' seem to work
+  // char placeholder_align[64 - 4 * sizeof(float3) - sizeof(uint8_t)];
+
+  __device__ float intersect(const Ray &r) {
+    float u, v;
+    glm::vec3 pvec = glm::cross(r.dir, e2);
+    float det = glm::dot(e1, pvec);
+
+    // if the determinant is negative the triangle is backfacing
+    // if the determinant is close to 0, the ray misses the triangle
+    if (det < epsilon) return false;
+    // ray and triangle are parallel if det is close to 0
+    // if (fabs(det) < Epsilon) return 0;
+    float invDet = 1 / det;
+
+    glm::vec3 tvec = r.orig - vert;
+    u = glm::dot(tvec, pvec) * invDet;
+    if (u < 0 || u > 1) return 0;
+
+    glm::vec3 qvec = glm::cross(tvec, e1);
+    v = glm::dot(r.dir, qvec) * invDet;
+    if (v < 0 || u + v > 1) return 0;
+    float t = dot(e2, qvec) * invDet;
+
+    return t;
+  }
 };
-
-struct CudaMesh {
-	unsigned verticesNo = 0;
-	unsigned trianglesNo = 0;
-	Vertex* vertices = nullptr;
-	Triangle* triangles = nullptr;
-};
-
-struct BVHNode;
-struct CacheFriendlyBVHNode;
-
-extern BVHNode* bvh;
-extern unsigned triangle_index_list_no;
-extern int* triangle_index_list;
-extern unsigned cache_bvh_no;
-extern CacheFriendlyBVHNode* cache_bvh;
-
-CudaMesh load_object(const std::string& source);

@@ -1,17 +1,17 @@
 #pragma once
 
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
 struct StaticMesh {
- private:
-  const aiScene* scene;
-  Assimp::Importer importer;
 
  public:
   std::vector<glm::vec3> vertices;
   std::vector<glm::vec3> normals;
+  std::vector<glm::uvec3> faces;
+  //TODO(Dan): Remove indices since it's deprecated, prefer faces vector
   std::vector<unsigned int> indices;
 
-  StaticMesh() {}
-  StaticMesh(const std::string& path);
+  StaticMesh() = default;
 
-  int load(const std::string& path);
+  int load(const aiScene *);
 };
