@@ -1,22 +1,22 @@
 #pragma once
 
+#include "Scene.h"
 #include <cuda_runtime.h>
 #include <stdbool.h>
-#include "Scene.h"
 struct pxl_interop {
-  int width;
-  int height;
+	int width;
+	int height;
 
-  // GL buffers
-  GLuint fb;
-  GLuint rb;
+	// GL buffers
+	GLuint fb;
+	GLuint rb;
 
-  // CUDA resources
-  cudaGraphicsResource_t cgr;
-  cudaArray_t ca;
+	// CUDA resources
+	cudaGraphicsResource_t cgr;
+	cudaArray_t ca;
 
-  cudaError_t set_size(const int width, const int height);
-  void blit();
+	cudaError_t set_size(const int width, const int height);
+	void blit();
 };
 
 pxl_interop* pxl_interop_create();

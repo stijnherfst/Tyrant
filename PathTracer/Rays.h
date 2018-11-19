@@ -4,8 +4,9 @@
 #include <cuda_runtime.h>
 #include <glm.hpp>
 struct Ray {
-  glm::vec3 orig;
-  glm::vec3 dir;
-  __device__ Ray(glm::vec3 origin, glm::vec3 direction)
-      : orig(origin), dir(direction) {}
+	glm::vec3 orig;
+	glm::vec3 dir;
+	__device__ Ray(glm::vec3 origin, glm::vec3 direction)
+		: orig(origin)
+		, dir(direction) {}
 };

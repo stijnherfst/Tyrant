@@ -2,43 +2,47 @@
 #include "Rays.h"
 #include "variables.h"
 struct Vertex {
-  glm::vec3 position;
-  glm::vec3 normal;
+	glm::vec3 position;
+	glm::vec3 normal;
 
-  Vertex() = default;
-  Vertex(float x, float y, float z, float nx, float ny, float nz)
-      : position(x, y, z), normal(glm::vec3(nx, ny, nz)) {}
+	Vertex() = default;
+	Vertex(float x, float y, float z, float nx, float ny, float nz)
+		: position(x, y, z)
+		, normal(glm::vec3(nx, ny, nz)) {}
 };
 
 struct Triangle {
-  glm::vec3 vert;
-  glm::vec3 e1, e2;
-  glm::vec3 color{1.0f, 0.8f, 0.1f};
-  uint8_t materialType{};
-  // HACK to align to 64 bytes since __align__ doesn' seem to work
-  // char placeholder_align[64 - 4 * sizeof(float3) - sizeof(uint8_t)];
+	glm::vec3 vert;
+	glm::vec3 e1, e2;
+	glm::vec3 color{ 1.0f, 0.8f, 0.1f };
+	uint8_t materialType{};
+	// HACK to align to 64 bytes since __align__ doesn' seem to work
+	// char placeholder_align[64 - 4 * sizeof(float3) - sizeof(uint8_t)];
 
-  __device__ float intersect(const Ray &r) {
-    float u, v;
-    glm::vec3 pvec = glm::cross(r.dir, e2);
-    float det = glm::dot(e1, pvec);
+	__device__ float intersect(const Ray& r) {
+		float u, v;
+		glm::vec3 pvec = glm::cross(r.dir, e2);
+		float det = glm::dot(e1, pvec);
 
-    // if the determinant is negative the triangle is backfacing
-    // if the determinant is close to 0, the ray misses the triangle
-    if (det < epsilon) return false;
-    // ray and triangle are parallel if det is close to 0
-    // if (fabs(det) < Epsilon) return 0;
-    float invDet = 1 / det;
+		// if the determinant is negative the triangle is backfacing
+		// if the determinant is close to 0, the ray misses the triangle
+		if (det < epsilon)
+			return false;
+		// ray and triangle are parallel if det is close to 0
+		// if (fabs(det) < Epsilon) return 0;
+		float invDet = 1 / det;
 
-    glm::vec3 tvec = r.orig - vert;
-    u = glm::dot(tvec, pvec) * invDet;
-    if (u < 0 || u > 1) return 0;
+		glm::vec3 tvec = r.orig - vert;
+		u = glm::dot(tvec, pvec) * invDet;
+		if (u < 0 || u > 1)
+			return 0;
 
-    glm::vec3 qvec = glm::cross(tvec, e1);
-    v = glm::dot(r.dir, qvec) * invDet;
-    if (v < 0 || u + v > 1) return 0;
-    float t = dot(e2, qvec) * invDet;
+		glm::vec3 qvec = glm::cross(tvec, e1);
+		v = glm::dot(r.dir, qvec) * invDet;
+		if (v < 0 || u + v > 1)
+			return 0;
+		float t = dot(e2, qvec) * invDet;
 
-    return t;
-  }
+		return t;
+	}
 };
