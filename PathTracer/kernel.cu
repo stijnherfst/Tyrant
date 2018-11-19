@@ -139,12 +139,12 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 			float r2s = sqrt(r2);
 
 			// Transform to hemisphere coordinate system
-			const glm::vec3 u = (glm::cross((abs(normal.x) > .1f ? glm::vec3(0.f, 1.f, 0.f)
+			const glm::vec3 u = glm::normalize(glm::cross((abs(normal.x) > .1f ? glm::vec3(0.f, 1.f, 0.f)
 																 : glm::vec3(1.f, 0.f, 0.f)),
 											normal));
 			const glm::vec3 v = cross(normal, u);
 			// Get sample on hemisphere
-			const glm::vec3 d = (u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
+			const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
 
 			glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
 			float sunLight = dot(normal, sunSampleDir);
