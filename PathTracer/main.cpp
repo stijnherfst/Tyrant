@@ -171,9 +171,6 @@ int main(int argc, char* argv[]) {
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		//static bool show_demo_window;
-		//ImGui::ShowDemoWindow(&show_demo_window);
-
 		{
 			static std::vector<float> frame_times;
 
@@ -184,9 +181,6 @@ int main(int argc, char* argv[]) {
 			}
 
 			ImGui::Begin("Performance");
-
-			ImGui::Text("Frametimes");
-			//ImGui::PlotLines("", frame_times.data(), frame_times.size(), 0, "", 0.f, std::numeric_limits<float>::max(), {400, 100});
 			ImGui::PlotHistogram("", frame_times.data(), frame_times.size(), 0, "Frametimes", 0, FLT_MAX, { 400, 100 });
 			ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
 			ImGui::Text("Blit time %f", blit_time);

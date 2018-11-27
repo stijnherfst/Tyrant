@@ -267,8 +267,7 @@ cudaError_t launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer,
 		sun_position_changed = false;
 		reset_buffer = true;
 		cuda(MemcpyToSymbol(SunPos, &sun_position, sizeof(glm::vec2)));
-		glm::vec3 sun_direction = glm::normalize(fromSpherical(
-			(sun_position - glm::vec2(0.0, 0.5)) * glm::vec2(6.28f, 3.14f)));
+		glm::vec3 sun_direction = glm::normalize(fromSpherical((sun_position - glm::vec2(0.0, 0.5)) * glm::vec2(6.28f, 3.14f)));
 		cuda(MemcpyToSymbol(sunDirection, &sun_direction, sizeof(glm::vec3)));
 	}
 
@@ -286,6 +285,9 @@ cudaError_t launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer,
 	threads = dim3(16, 16, 1);
 	blocks = dim3(render_width / threads.x, render_height / threads.y, 1);
 	blit_onto_framebuffer<<<blocks, threads>>>(blit_buffer, hold_frame);
+
+	cuda(DeviceSynchronize());
+
 
 	frame++;
 	hold_frame++;
