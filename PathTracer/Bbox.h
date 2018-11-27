@@ -36,8 +36,7 @@ struct BBox {
 			return 2; // Z is largest
 	}
 
-	__device__ bool intersect(const Ray& r, glm::vec3 invDir, int rayDirNeg[3],
-							  float lowestIntersect) const {
+	__device__ bool intersect(const Ray& r, glm::vec3 invDir, int rayDirNeg[3], float lowestIntersect) const {
 		float tMin = (bounds[rayDirNeg[0]].x - r.orig.x) * invDir.x;
 		float tMax = (bounds[1 - rayDirNeg[0]].x - r.orig.x) * invDir.x;
 		float tyMin = (bounds[rayDirNeg[1]].y - r.orig.y) * invDir.y;

@@ -2,6 +2,12 @@
 #include "Scene.h"
 #include "stdafx.h"
 
+#include "IMGUI/imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+
+const char* glsl_version = "#version 450 core";
+
 static void glfw_fps(GLFWwindow* window) {
 	// Static fps counters
 	static double previous_time = 0.0;
@@ -43,6 +49,8 @@ static void glfw_key_callback(GLFWwindow* window, int key, int scancode,
 }
 
 int main(int argc, char* argv[]) {
+
+	// OpenGL and GLFW setup
 	GLFWwindow* window;
 
 	glfwSetErrorCallback(glfw_error_callback);
@@ -82,13 +90,27 @@ int main(int argc, char* argv[]) {
 	// only copy r/g/b
 	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 
+	// IMGUI setup
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO();
+	(void)io;
+	//io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
+	//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;   // Enable Gamepad Controls
+
+	ImGui_ImplGlfw_InitForOpenGL(window, true);
+	ImGui_ImplOpenGL3_Init(glsl_version);
+
+	// Setup style
+	ImGui::StyleColorsDark();
+
+	// CUDA setup
 	cudaError_t cuda_err;
 
 	int gl_device_id;
 	unsigned int gl_device_count;
 
-	cuda_err = cuda(
-		GLGetDevices(&gl_device_count, &gl_device_id, 1u, cudaGLDeviceListAll));
+	cuda_err = cuda(GLGetDevices(&gl_device_count, &gl_device_id, 1u, cudaGLDeviceListAll));
 
 	int cuda_device_id = (argc > 1) ? atoi(argv[1]) : gl_device_id;
 	cuda_err = cuda(SetDevice(cuda_device_id));
@@ -112,9 +134,6 @@ int main(int argc, char* argv[]) {
 
 	Scene scene;
 	scene.Load("Data/dragon.ply");
-	// CudaMesh cuda_mesh = load_object("Data/cube.ply");
-	// update_bvh(cuda_mesh, "Data/cube.ply");
-	// upload_cuda_data(cuda_mesh);
 
 	// Allocate ray queue buffer
 	RayQueue* ray_queue_buffer;
@@ -139,10 +158,43 @@ int main(int argc, char* argv[]) {
 			sun_position -= glm::vec2(0.05 * delta, 0.05 * delta);
 			sun_position_changed = true;
 		}
+		static double blit_time;
+		blit_time = glfwGetTime();
 		camera.update(window, delta);
-		launch_kernels(interop->ca, blit_buffer, scene.gpuScene);
 
+		blit_time = glfwGetTime() - blit_time;
+		launch_kernels(interop->ca, blit_buffer, scene.gpuScene);
 		interop->blit();
+
+		// IMGUI
+		ImGui_ImplOpenGL3_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		//static bool show_demo_window;
+		//ImGui::ShowDemoWindow(&show_demo_window);
+
+		{
+			static std::vector<float> frame_times;
+
+			frame_times.push_back(delta);
+
+			if (frame_times.size() > 200) {
+				frame_times.erase(frame_times.begin());
+			}
+
+			ImGui::Begin("Performance");
+
+			ImGui::Text("Frametimes");
+			//ImGui::PlotLines("", frame_times.data(), frame_times.size(), 0, "", 0.f, std::numeric_limits<float>::max(), {400, 100});
+			ImGui::PlotHistogram("", frame_times.data(), frame_times.size(), 0, "Frametimes", 0, FLT_MAX, { 400, 100 });
+			ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+			ImGui::Text("Blit time %f", blit_time);
+			ImGui::End();
+		}
+
+		ImGui::Render();
+		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
 		glfwSwapBuffers(window);
 		glfwPollEvents();

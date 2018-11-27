@@ -118,6 +118,8 @@
     <ClCompile Include="IMGUI\imgui_widgets.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="imgui_impl_glfw.cpp" />
+    <ClCompile Include="imgui_impl_opengl3.cpp" />
     <ClCompile Include="interop.cpp" />
     <ClCompile Include="loader.cpp" />
     <ClCompile Include="main.cpp" />
@@ -141,6 +143,8 @@
     <ClInclude Include="IMGUI\imstb_rectpack.h" />
     <ClInclude Include="IMGUI\imstb_textedit.h" />
     <ClInclude Include="IMGUI\imstb_truetype.h" />
+    <ClInclude Include="imgui_impl_glfw.h" />
+    <ClInclude Include="imgui_impl_opengl3.h" />
     <ClInclude Include="interop.h" />
     <ClInclude Include="loader.h" />
     <ClInclude Include="Rays.h" />

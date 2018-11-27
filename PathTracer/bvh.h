@@ -69,14 +69,13 @@ public:
 
 	__host__ int buildCachedBVH(BVH::BVHNode* node, int& offset);
 
-	__device__ bool intersect(const Ray& ray, float& closestIntersection,
-							  int& primitiveIndex) {
+	__device__ bool intersect(const Ray& ray, float& closestIntersection, int& primitiveIndex) {
 		if (nodes == nullptr) {
 			return false;
 		}
 
 		bool hit = false;
-		glm::vec3 invDir = glm::vec3(1 / ray.dir.x, 1 / ray.dir.y, 1 / ray.dir.z);
+		glm::vec3 invDir = 1.f / ray.dir;
 		int dirIsNeg[3] = { invDir.x < 0, invDir.y < 0, invDir.z < 0 };
 		// Follow ray through BVH nodes to find primitive intersections
 		int toVisitOffset = 0, currentNodeIndex = 0;
