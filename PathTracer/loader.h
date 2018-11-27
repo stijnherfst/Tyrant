@@ -14,9 +14,8 @@ struct Vertex {
 struct Triangle {
 	glm::vec3 vert;
 	glm::vec3 e1, e2;
-	glm::vec3 color{ 1.0f, 0.8f, 0.1f };
 	uint8_t materialType{};
-	// HACK to align to 64 bytes since __align__ doesn' seem to work
+	// HACK to align to 64 bytes since __align__ doesn't seem to work
 	// char placeholder_align[64 - 4 * sizeof(float3) - sizeof(uint8_t)];
 
 	__device__ float intersect(const Ray& r) {
