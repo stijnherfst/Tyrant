@@ -2,8 +2,8 @@
 
 #include "Scene.h"
 #include <cuda_runtime.h>
-#include <stdbool.h>
-struct pxl_interop {
+
+struct cuda_interop {
 	int width;
 	int height;
 
@@ -12,15 +12,14 @@ struct pxl_interop {
 	GLuint rb;
 
 	// CUDA resources
-	cudaGraphicsResource_t cgr;
-	cudaArray_t ca;
+	cudaGraphicsResource* cgr = nullptr;
+	cudaArray* ca = nullptr;
 
-	cudaError_t set_size(const int width, const int height);
+	cuda_interop();
+	~cuda_interop();
+
+	cudaError set_size(const int width, const int height);
 	void blit();
 };
 
-pxl_interop* pxl_interop_create();
-
-void interop_destroy(struct pxl_interop* const interop);
-
-cudaError_t launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene::GPUScene gpuScene);
+cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene::GPUScene gpuScene);

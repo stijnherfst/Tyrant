@@ -4,8 +4,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <list>
+#include <numeric>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string>
@@ -16,6 +18,8 @@
 #include "GLFW/glfw3.h"
 
 #include "cuda.h"
+#include <cuda_runtime.h>
+
 #define GLM_FORCE_CUDA
 //#define GLM_FORCE_PURE
 #define GLM_FORCE_CXX17
@@ -30,6 +34,7 @@
 #include "loader.h"
 #include "static_mesh.h"
 #include "variables.h"
+#include "performance_measure.h"
 
 //#include "Bbox.h"
 //#include "BVH.h"

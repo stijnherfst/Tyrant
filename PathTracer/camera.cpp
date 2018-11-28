@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-void Camera::update(GLFWwindow* window, const double delta) {
+void Camera::handle_input(GLFWwindow* window, double delta) {
 	float speed = 1;
 	if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT)) {
 		speed = 40;
@@ -28,6 +28,7 @@ void Camera::update(GLFWwindow* window, const double delta) {
 	if (glfwGetKey(window, GLFW_KEY_LEFT_ALT)) {
 		return;
 	}
+
 	double x, y;
 	glfwGetCursorPos(window, &x, &y);
 	int w, h;
@@ -41,7 +42,9 @@ void Camera::update(GLFWwindow* window, const double delta) {
 	vertical_angle = std::max(-pi / 2 + 0.001, std::min(vertical_angle, pi / 2 - 0.001));
 
 	glfwSetCursorPos(window, w * 0.5, h * 0.5);
+}
 
+void Camera::update() {
 	direction = glm::vec3(std::cos(vertical_angle) * std::sin(horizontal_angle),
 						  std::cos(vertical_angle) * std::cos(horizontal_angle),
 						  std::sin(vertical_angle));
