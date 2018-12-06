@@ -1,10 +1,8 @@
 #include "stdafx.h"
 
-cudaError_t cuda_assert(const cudaError_t code, const char* const file,
-						const int line, const bool abort) {
+cudaError cuda_assert(const cudaError code, const char* const file, const int line, const bool abort) {
 	if (code != cudaSuccess) {
-		fprintf(stderr, "cuda_assert: %s %s %d\n", cudaGetErrorString(code), file,
-				line);
+		fprintf(stderr, "cuda_assert: %s %s %d\n", cudaGetErrorString(code), file, line);
 
 		if (abort) {
 			cudaDeviceReset();

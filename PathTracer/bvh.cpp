@@ -1,8 +1,4 @@
-#include "BVH.h"
-#include "loader.h"
-#include <algorithm>
-#include <assert.h>
-#include <vector>
+#include "stdafx.h"
 
 BVH::BVH(std::vector<Triangle>& primitives, std::vector<BBox> primitivesBBoxes,
 		 PartitionAlgorithm partitionAlgo)
@@ -140,3 +136,4 @@ int CachedBVH::buildCachedBVH(BVH::BVHNode* node, int& offset) {
 	}
 	return myOffset;
 }
+

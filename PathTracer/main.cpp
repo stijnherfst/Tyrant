@@ -1,55 +1,26 @@
-#include "Bbox.h"
-#include "Scene.h"
 #include "stdafx.h"
 
 #include "IMGUI/imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
-const char* glsl_version = "#version 450 core";
-
-static void glfw_fps(GLFWwindow* window) {
-	// Static fps counters
-	static double previous_time = 0.0;
-	static int frame_count = 0;
-
-	const double current_time = glfwGetTime();
-	const double elapsed = current_time - previous_time;
-
-	if (elapsed > 0.5) {
-		previous_time = current_time;
-
-		const double fps = (double)frame_count / elapsed;
-
-		int width, height;
-		char tmp[64];
-
-		glfwGetFramebufferSize(window, &width, &height);
-
-		sprintf_s(tmp, 64, "(%u x %u) - FPS: %.2f ms: %.3f", width, height, fps,
-				  (elapsed / frame_count) * 1000);
-
-		glfwSetWindowTitle(window, tmp);
-
-		frame_count = 0;
-	}
-
-	frame_count++;
-}
+#define PERFORMANCE_TEST
 
 static void glfw_error_callback(int error, const char* description) {
 	std::cout << description << "\n";
 }
 
-static void glfw_key_callback(GLFWwindow* window, int key, int scancode,
-							  int action, int mods) {
+static void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
 	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
 		glfwSetWindowShouldClose(window, true);
 	}
 }
 
-int main(int argc, char* argv[]) {
+#ifdef PERFORMANCE_TEST
+	PerformanceMeasure performance;
+#endif
 
+int main(int argc, char* argv[]) {
 	// OpenGL and GLFW setup
 	GLFWwindow* window;
 
@@ -72,8 +43,7 @@ int main(int argc, char* argv[]) {
 
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-	window = glfwCreateWindow(render_width, render_height, "CUDA Path Tracer",
-							  nullptr, nullptr);
+	window = glfwCreateWindow(render_width, render_height, "CUDA Path Tracer", nullptr, nullptr);
 
 	if (!window) {
 		glfwTerminate();
@@ -99,7 +69,7 @@ int main(int argc, char* argv[]) {
 	//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;   // Enable Gamepad Controls
 
 	ImGui_ImplGlfw_InitForOpenGL(window, true);
-	ImGui_ImplOpenGL3_Init(glsl_version);
+	ImGui_ImplOpenGL3_Init();
 
 	// Setup style
 	ImGui::StyleColorsDark();
@@ -124,30 +94,44 @@ int main(int argc, char* argv[]) {
 	cuda_err = cuda(GetDeviceProperties(&props, cuda_device_id));
 	printf("CUDA : %-24s (%2d)\n", props.name, props.multiProcessorCount);
 
-	pxl_interop* interop = pxl_interop_create();
+	cuda_interop interop;
 
 	int width, height;
 	glfwGetFramebufferSize(window, &width, &height);
-	cuda_err = interop->set_size(width, height);
+	cuda_err = interop.set_size(width, height);
 
 	glfwSetKeyCallback(window, glfw_key_callback);
 
 	Scene scene;
 	scene.Load("Data/dragon.ply");
 
+	#ifdef PERFORMANCE_TEST
+		std::ofstream test_file("performance.txt");
+	#endif
+
 	// Allocate ray queue buffer
 	RayQueue* ray_queue_buffer;
 	cuda(Malloc(&ray_queue_buffer, ray_queue_buffer_size * sizeof(RayQueue)));
 
+	RayQueue* ray_queue_buffer2;
+	cuda(Malloc(&ray_queue_buffer2, ray_queue_buffer_size * sizeof(RayQueue)));
+
+	ShadowQueue* shadow_queue_buffer;
+	cuda(Malloc(&shadow_queue_buffer, ray_queue_buffer_size * sizeof(ShadowQueue)));
+
 	glm::vec4* blit_buffer;
 	cuda(Malloc(&blit_buffer, render_width * render_height * sizeof(glm::vec4)));
+
+	unsigned int* primary_ray_count;
+	cudaMalloc((void**)&primary_ray_count, sizeof(int));
+
+	unsigned int* shadow_ray_count;
+	cudaMalloc((void**)&shadow_ray_count, sizeof(int));
 
 	double previous_time = glfwGetTime();
 	while (!glfwWindowShouldClose(window)) {
 		double delta = glfwGetTime() - previous_time;
 		previous_time = glfwGetTime();
-
-		glfw_fps(window);
 
 		if (glfwGetKey(window, GLFW_KEY_MINUS)) {
 			sun_position += glm::vec2(0.05 * delta, 0.05 * delta);
@@ -158,13 +142,20 @@ int main(int argc, char* argv[]) {
 			sun_position -= glm::vec2(0.05 * delta, 0.05 * delta);
 			sun_position_changed = true;
 		}
-		static double blit_time;
-		blit_time = glfwGetTime();
-		camera.update(window, delta);
 
-		blit_time = glfwGetTime() - blit_time;
-		launch_kernels(interop->ca, blit_buffer, scene.gpuScene);
-		interop->blit();
+#ifdef PERFORMANCE_TEST
+		bool done = performance.measure(delta);
+		if (done) {
+			break;
+		}
+#else
+		camera.handle_input(window, delta);
+#endif
+		camera.update();
+
+		launch_kernels(interop.ca, blit_buffer, scene.gpuScene, ray_queue_buffer, ray_queue_buffer2, shadow_queue_buffer, primary_ray_count, shadow_ray_count);
+		std::swap(ray_queue_buffer, ray_queue_buffer2);
+		interop.blit();
 
 		// IMGUI
 		ImGui_ImplOpenGL3_NewFrame();
@@ -181,9 +172,11 @@ int main(int argc, char* argv[]) {
 			}
 
 			ImGui::Begin("Performance");
-			ImGui::PlotHistogram("", frame_times.data(), frame_times.size(), 0, "Frametimes", 0, FLT_MAX, { 400, 100 });
 			ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-			ImGui::Text("Blit time %f", blit_time);
+			ImGui::PlotHistogram("", frame_times.data(), frame_times.size(), 0, "Frametimes", 0, FLT_MAX, { 400, 100 });
+			ImGui::Text("X: %f, Y: %f, Z: %f", camera.position.x, camera.position.y, camera.position.z);
+			ImGui::Text("Hor: %f, Vert: %f", camera.horizontal_angle, camera.vertical_angle);
+
 			ImGui::End();
 		}
 
@@ -194,7 +187,6 @@ int main(int argc, char* argv[]) {
 		glfwPollEvents();
 	}
 
-	interop_destroy(interop);
 	glfwDestroyWindow(window);
 	glfwTerminate();
 

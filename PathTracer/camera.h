@@ -13,7 +13,8 @@ struct Camera {
 	double horizontal_angle = 0.0;
 	double vertical_angle = 0.0;
 
-	void update(GLFWwindow* window, double delta);
+	void handle_input(GLFWwindow* window, double delta);
+	void update();
 };
 
 extern Camera camera;
