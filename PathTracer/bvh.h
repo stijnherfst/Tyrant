@@ -1,8 +1,5 @@
 #pragma once
 
-//#include <vector>
-//#include "stdafx.h"
-
 #include "BBox.h"
 #include "loader.h"
 #include <algorithm>
@@ -11,6 +8,8 @@
 enum class PartitionAlgorithm { Middle,
 								EqualCounts,
 								SAH };
+constexpr uint32_t MAX_PRIMITIVES_EqualCounts = 1;
+//constexpr uint32_t MAX_PRIMITIVES_SAH;
 
 class BVH {
 public:
@@ -25,14 +24,14 @@ public:
 	} * root;
 	/*TODO: Implement this.*/
 	~BVH() {}
-	int nNodes = {};
+	int nNodes = 0;
 	const PartitionAlgorithm partitionAlgorithm;
 
 private:
 	struct PrimitiveInfo {
-		uint32_t primitiveNumber{};
-		BBox bbox{};
-		glm::vec3 centroid{};
+		uint32_t primitiveNumber = {};
+		BBox bbox = {};
+		glm::vec3 centroid = {};
 		PrimitiveInfo() = default;
 		PrimitiveInfo(uint32_t primitiveNumber, BBox& bbox)
 			: primitiveNumber(primitiveNumber)
@@ -88,7 +87,7 @@ public:
 					// LEAF
 					for (int i = 0; i < node->primitiveCount; ++i) {
 						float intersection = primitives[node->primitiveOffset + i].intersect(ray);
-						if (intersection > epsilon && intersection < closestIntersection && ((closestIntersection - intersection) > epsilon)) {
+						if (intersection > 0.00001 && intersection < closestIntersection && ((closestIntersection - intersection) > 0.00001)) {
 							primitiveIndex = node->primitiveOffset + i;
 							closestIntersection = intersection;
 							hit = true;
