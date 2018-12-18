@@ -29,6 +29,22 @@ BVH::BVH(std::vector<Triangle>& primitives, std::vector<BBox> primitivesBBoxes,
 	std::cout << "Created BVH, total nodes : " << nNodes << "\n";
 }
 
+int BVH::computeBucket(PrimitiveInfo primitive, glm::vec3 centroidBottom, glm::vec3 centroidTop, int dim) {
+	//Get the distance from the start of the split in the axis;
+	float distance = primitive.centroid[dim] - centroidBottom[dim];
+	//Normalize the distance
+	if (centroidTop[dim] > centroidBottom[dim]) {
+		//TODO(Dan): Is this 'if' needed? 
+		//Normalize to [0,1]
+		distance = distance / (centroidTop[dim] - centroidBottom[dim]);
+	}
+	int bucket_idx = (int)(bucket_number * distance);
+	if (bucket_idx == bucket_number) { //Can only happen if last primitive in axis has bottom == top
+		bucket_idx--;
+	}
+	return bucket_idx;
+}
+
 //Recursively build a BVH node
 BVH::BVHNode* BVH::recursiveBuild(int start, int end, int& nNodes,
 								  std::vector<PrimitiveInfo>& primitiveInfo,
@@ -100,26 +116,14 @@ BVH::BVHNode* BVH::recursiveBuild(int start, int end, int& nNodes,
 				int count = { 0 };
 				BBox bounds;
 			};
-			constexpr int bucket_number = 12;
 			Bucket buckets[bucket_number] = {};
 
 			//Place all the primitives in the buckets
 			glm::vec3 splitVector = centroidBBox.bounds[1] - centroidBBox.bounds[0];
 			for (int i = start; i < end; ++i) {
-				//Get the distance from the start of the split in the axis;
-				float distance = primitiveInfo[i].centroid[dim] - centroidBottom[dim];
-				//Normalize the distance
-				if (centroidTop[dim] > centroidBottom[dim]) {
-					//TODO(Dan): Is this 'if' needed? They're not equal and bottom < top only if bbox is not initialized
-					//Normalize to [0,1]
-					distance = distance / (centroidTop[dim] - centroidBottom[dim]);
-				}
-				int bucketIndex = (int)(bucket_number * distance);
-				if (bucketIndex == bucket_number) { //Can only happen if last primitive in axis has bottom == top
-					bucketIndex--;
-				}
-				buckets[bucketIndex].count++;
-				buckets[bucketIndex].bounds = Union(buckets[bucketIndex].bounds, primitiveInfo[i].bbox);
+				int bucket_idx = computeBucket(primitiveInfo[i], centroidBottom, centroidTop, dim);
+				buckets[bucket_idx].count++;
+				buckets[bucket_idx].bounds = Union(buckets[bucket_idx].bounds, primitiveInfo[i].bbox);
 			}
 			//Determine cost after splitting at each bucket
 			//Split is [0,currentBucket] and (currentBucket, bucket_number - 2].
@@ -129,7 +133,6 @@ BVH::BVHNode* BVH::recursiveBuild(int start, int end, int& nNodes,
 			float min_split_cost = FLT_MAX;
 			int min_split_bucket = -1;
 			for (int current_bucket = 0; current_bucket < bucket_number - 1; ++current_bucket) {
-
 				int count_first_interval = 0;
 				int count_second_interval = 0;
 				BBox bbox_first_interval = {};
@@ -146,7 +149,7 @@ BVH::BVHNode* BVH::recursiveBuild(int start, int end, int& nNodes,
 					count_second_interval += buckets[i].count;
 				}
 				//Compute SAH cost
-				cost[current_bucket] = 1 + (count_first_interval * bbox_first_interval.surfaceArea() + count_second_interval * bbox_second_interval.surfaceArea()) / nodeBBox.surfaceArea();
+				cost[current_bucket] = TRAVERSAL_COST + (count_first_interval * bbox_first_interval.surfaceArea() + count_second_interval * bbox_second_interval.surfaceArea()) / nodeBBox.surfaceArea();
 				//Update min cost
 				if (cost[current_bucket] < min_split_cost) {
 					min_split_cost = cost[current_bucket];
@@ -155,26 +158,15 @@ BVH::BVHNode* BVH::recursiveBuild(int start, int end, int& nNodes,
 			}
 			assert(min_split_bucket != -1);
 
-			float leafCost = nPrimitives;
-			if (nPrimitives > 4 || min_split_cost < leafCost) {
+			float leaf_cost = INTERSECTION_COST * nPrimitives;
+			if (nPrimitives > max_prim_number || min_split_cost < leaf_cost) {
 				PrimitiveInfo* pmid = std::partition(&primitiveInfo[start],
 													 &primitiveInfo[end - 1] + 1,
 													 [=](const PrimitiveInfo& pi) {
-														 //TODO(Dan): Turn this into a function
-														 //Get the distance from the start of the split in the axis;
-														 float distance = pi.centroid[dim] - centroidBottom[dim];
-														 //Normalize the distance
-														 if (centroidTop[dim] > centroidBottom[dim]) {
-															 //TODO(Dan): Is this 'if' needed? They're not equal and bottom < top only if bbox is not initialized
-															 //Normalize to [0,1]
-															 distance = distance / (centroidTop[dim] - centroidBottom[dim]);
-														 }
-														 int bucketIndex = (int)(bucket_number * distance);
-														 if (bucketIndex == bucket_number) { //Can only happen if last primitive in axis has bottom == top
-															 bucketIndex--;
-														 }
+														 int bucketIndex = computeBucket(pi, centroidBottom, centroidTop, dim);
 														 return bucketIndex <= min_split_bucket;
 													 });
+				//TODO(Dan): Is this technically undefined?
 				mid = pmid - &primitiveInfo[0];
 			} else {
 				int firstPrimOffset = orderedPrimitives.size();
