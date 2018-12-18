@@ -4,6 +4,7 @@ void Scene::Load(const char path[]) {
 	const aiScene* importer_scene = importer.ReadFile(
 		path, aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices);
 	StaticMesh mesh;
+	std::cout << "Loading scene:" << path << "\n";
 	mesh.load(importer_scene);
 	for (auto& vertex : mesh.vertices) {
 		glm::vec3 tempVertex = glm::vec3{ vertex.x, vertex.z, vertex.y };
@@ -18,20 +19,24 @@ void Scene::Load(const char path[]) {
 	/*Compute the primitives and bounding boxes needed for BVH from the meshes*/;
 	for (const auto& mesh : meshes) {
 		for (const auto& face : mesh.faces) {
-			Triangle tempTriangle;
-			glm::vec3 vertexes[3];
-			BBox bbox;
 			/*Load actual vertexes from mesh*/
+
+			glm::vec3 vertexes[3];
 			vertexes[0] = mesh.vertices[face.x];
 			vertexes[1] = mesh.vertices[face.y];
 			vertexes[2] = mesh.vertices[face.z];
+
 			/*Compute bbox*/
+
+			BBox bbox;
 			for (const auto& vertex : vertexes) {
 				bbox.addVertex(vertex);
 			}
-
 			primitiveBBoxes.push_back(bbox);
+
 			/*Get primitive in the format we like*/
+
+			Triangle tempTriangle;
 			tempTriangle.vert = vertexes[0];
 			tempTriangle.e1 = vertexes[1] - vertexes[0];
 			tempTriangle.e2 = vertexes[2] - vertexes[0];
@@ -42,11 +47,10 @@ void Scene::Load(const char path[]) {
 	}
 
 	if (primitives.size() == 0) {
-		// TODO(Dan): Log error
-		// Info("No primitives found in scene, loading scene without any");
+		std::cerr << "No primitives found in scene, loading scene without any \n";
 		return;
 	}
-	BVH bvh(primitives, primitiveBBoxes, PartitionAlgorithm::EqualCounts);
+	BVH bvh(primitives, primitiveBBoxes, PartitionAlgorithm::SAH);
 
 	CachedBVH cachedBVH(bvh.nNodes, primitives);
 

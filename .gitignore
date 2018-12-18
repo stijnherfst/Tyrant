@@ -325,3 +325,6 @@ ASALocalRun/
 !PathTracer/[Dd]ependencies/**/*
 !PathTracer/[Dd]ependencies/**/**/*
 PathTracer/Dependencies/assimp-4\.1\.0/debug/assimp-vc140-mt\.lib
+/PathTracer/My Inspector Results - PathTracer
+
+PathTracer/Data/Untitled\.fbx

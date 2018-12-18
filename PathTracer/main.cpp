@@ -103,6 +103,7 @@ int main(int argc, char* argv[]) {
 	glfwSetKeyCallback(window, glfw_key_callback);
 
 	Scene scene;
+	//scene.Load("Data/Untitled.fbx");
 	scene.Load("Data/dragon.ply");
 
 	#ifdef PERFORMANCE_TEST

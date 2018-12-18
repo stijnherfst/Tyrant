@@ -24,7 +24,7 @@ struct Triangle {
 
 		// if the determinant is negative the triangle is backfacing
 		// if the determinant is close to 0, the ray misses the triangle
-		if (det < epsilon)
+		if (det < 0.0000001f)
 			return false;
 		// ray and triangle are parallel if det is close to 0
 		// if (fabs(det) < Epsilon) return 0;

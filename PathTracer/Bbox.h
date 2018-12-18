@@ -12,6 +12,7 @@ struct BBox {
 		return *this;
 	}
 
+	//Computes the vector top - botom (i.e diagonal of the box)
 	__host__ glm::vec3 diagonal() const { return bounds[1] - bounds[0]; }
 	__host__ float surfaceArea() const {
 		glm::vec3 d = diagonal();
@@ -59,4 +60,5 @@ struct BBox {
 	}
 };
 
+/*Computes the union of two bounding boxes*/
 __host__ BBox Union(const BBox& b1, const BBox& b2);

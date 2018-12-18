@@ -15,7 +15,7 @@ int StaticMesh::load(const aiScene* scene) {
 
 			// Switch y and z
 			vertices.push_back(glm::vec3(vertex->x, vertex->z, vertex->y));
-			normals.push_back(glm::vec3(normal->x, normal->y, normal->z));
+			normals.push_back(glm::vec3(normal->x, normal->z, normal->y));
 		}
 
 		for (unsigned int i = 0; i < mesh->mNumFaces; i++) {

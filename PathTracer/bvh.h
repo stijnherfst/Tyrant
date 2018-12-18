@@ -3,6 +3,8 @@
 enum class PartitionAlgorithm { Middle,
 								EqualCounts,
 								SAH };
+constexpr uint32_t MAX_PRIMITIVES_EqualCounts = 1;
+//constexpr uint32_t MAX_PRIMITIVES_SAH;
 
 class BVH {
 public:
@@ -17,14 +19,14 @@ public:
 	} * root;
 	/*TODO: Implement this.*/
 	~BVH() {}
-	int nNodes = {};
+	int nNodes = 0;
 	const PartitionAlgorithm partitionAlgorithm;
 
 private:
 	struct PrimitiveInfo {
-		uint32_t primitiveNumber{};
-		BBox bbox{};
-		glm::vec3 centroid{};
+		uint32_t primitiveNumber = {};
+		BBox bbox = {};
+		glm::vec3 centroid = {};
 		PrimitiveInfo() = default;
 		PrimitiveInfo(uint32_t primitiveNumber, BBox& bbox)
 			: primitiveNumber(primitiveNumber)

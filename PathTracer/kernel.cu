@@ -1,4 +1,4 @@
-﻿#include "stdafx.h"
+#include "stdafx.h"
 #include "sunsky.cuh"
 
 #include "assert_cuda.h"
