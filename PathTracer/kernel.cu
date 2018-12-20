@@ -184,18 +184,26 @@ __global__ void primary_rays(RayQueue* queue, glm::vec3 camera_right, glm::vec3 
 	queue[start_index + index] = { O, direction, { 0, 0, 0 }, 0, 0, 0, x, y };
 }
 
+__device__ unsigned int raynr = 0;
+
+//__launch_bounds__(128, 8)
 /// Advance the ray segments once
 __global__ void extend(RayQueue* queue, Scene::GPUScene sceneData) {
-	const int index = blockIdx.x * blockDim.x + threadIdx.x;
-	
-	if (index > ray_queue_buffer_size - 1) {
-		return;
+	if (blockIdx.x == 0 && threadIdx.x == 0) {
+		raynr = 0;
 	}
-	
-	RayQueue& ray = queue[index];
+	while (true) {
+		unsigned int index = atomicAdd(&raynr, 1);
 
-	ray.distance = 1e20f;
-	sceneData.CUDACachedBVH.intersect(ray);
+		if (index > ray_queue_buffer_size - 1) {
+			return;
+		}
+	
+		RayQueue& ray = queue[index];
+
+		ray.distance = 1e20f;
+		sceneData.CUDACachedBVH.intersect(ray);
+	}
 }
 
 /// Process collisions and spawn extension and shadow rays
@@ -367,9 +375,11 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 
 	cudaMemset(primary_ray_count, 0, sizeof(unsigned));
 	cudaMemset(shadow_ray_count, 0, sizeof(unsigned));
-
+	
 	int primary_blocks2 = ceil(ray_queue_buffer_size / 32.f);
-	extend<<<primary_blocks2, 32>>>(queue, sceneData);
+
+
+	extend<<<40, 128>>>(queue, sceneData);
 
 	shade<<<primary_blocks2, 32>>>(queue, queue2, shadow_queue, sceneData, blit_buffer, frame, primary_ray_count, shadow_ray_count);
 
@@ -387,7 +397,6 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 	//std::cout << "Shadow: " << host_shadow_rays << " Primary: " << host_primary_rays << "\n";
 
 	cuda(DeviceSynchronize());
-
 	frame++;
 	//hold_frame++;
 	last_pos = camera.position;
