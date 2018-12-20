@@ -1,4 +1,4 @@
-﻿#include "stdafx.h"
+#include "stdafx.h"
 #include "sunsky.cuh"
 
 #include "Bbox.h"
@@ -85,6 +85,7 @@ __device__ inline bool intersect_scene(const Ray& ray, float& t, int& id,
 			geometry_type = 1;
 		}
 	}
+
 	if (sceneData.CUDACachedBVH.intersect(ray, t, id)) {
 		geometry_type = 2;
 	}

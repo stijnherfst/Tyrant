@@ -1,8 +1,5 @@
 #pragma once
 
-//#include <vector>
-//#include "stdafx.h"
-
 #include "BBox.h"
 #include "loader.h"
 #include <algorithm>
@@ -11,6 +8,8 @@
 enum class PartitionAlgorithm { Middle,
 								EqualCounts,
 								SAH };
+constexpr uint32_t MAX_PRIMITIVES_EqualCounts = 1;
+//constexpr uint32_t MAX_PRIMITIVES_SAH;
 
 class BVH {
 public:
@@ -23,22 +22,40 @@ public:
 		BVHNode* children[2];
 		int splitAxis, firstPrimOffset, nPrimitives;
 	} * root;
-	/*TODO: Implement this.*/
+	/*TODO: Implement destructor.*/
 	~BVH() {}
-	int nNodes = {};
+	int nNodes = 0;
 	const PartitionAlgorithm partitionAlgorithm;
 
 private:
+	//Number of buckets to split up axis for SAH
+	static constexpr int bucket_number = 12;
+	//Maximum number of primitives allowed in BVH leaf node for SAH
+	static constexpr int max_prim_number = 4;
+
+	//cost to traverse a node in the BVH. If INTERSECTION_COST is 1 then this is just percentage slower/faster
+	static constexpr float TRAVERSAL_COST = 1.0f;
+
+	//cost to intersect a triangle int the BVH. Leave this as "1" and change TRAVERSAL_COST instead
+	static constexpr float INTERSECTION_COST = 1.0f;
+
+	static_assert(INTERSECTION_COST == 1, "You can vary traversal_cost instead of intersection_cost");
+	static_assert(bucket_number >= 2, "Buckets should be enough to split the space! At least 2 required");
+
 	struct PrimitiveInfo {
-		uint32_t primitiveNumber{};
-		BBox bbox{};
-		glm::vec3 centroid{};
+		uint32_t primitiveNumber = {};
+		BBox bbox = {};
+		glm::vec3 centroid = {};
 		PrimitiveInfo() = default;
 		PrimitiveInfo(uint32_t primitiveNumber, BBox& bbox)
 			: primitiveNumber(primitiveNumber)
 			, bbox(bbox)
 			, centroid(bbox.bounds[0] * 0.5f + bbox.bounds[1] * 0.5f) {}
 	};
+
+	//Calculate the bucket in which a primitive is to be placed for the SAH algorithm.
+	//Bucket is computed by evenly splitting along a dimension the intervals in the centroid bounding box
+	int computeBucket(PrimitiveInfo primitive, glm::vec3 centroidBottom, glm::vec3 centroidTop, int dim);
 
 	BVHNode* recursiveBuild(int start, int end, int& nNodes,
 							std::vector<PrimitiveInfo>& primitiveInfo,
@@ -88,7 +105,7 @@ public:
 					// LEAF
 					for (int i = 0; i < node->primitiveCount; ++i) {
 						float intersection = primitives[node->primitiveOffset + i].intersect(ray);
-						if (intersection > epsilon && intersection < closestIntersection && ((closestIntersection - intersection) > epsilon)) {
+						if (intersection > 0.00001f && intersection < closestIntersection && ((closestIntersection - intersection) > 0.00001f)) {
 							primitiveIndex = node->primitiveOffset + i;
 							closestIntersection = intersection;
 							hit = true;
