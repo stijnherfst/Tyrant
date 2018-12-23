@@ -105,13 +105,13 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 	glm::vec3 direct = { 0.f, 0.f, 0.f };
 
 	int geometry_type = 0;
-	int reflection_type;
+	int reflection_type = SPEC;
 
 	float distance;
 	int id;
 	for (int bounces = 0; bounces < 5; bounces++) {
 		if (!intersect_scene(ray, distance, id, geometry_type, sceneData)) {
-			return direct + color * (bounces > 0 ? sky(ray.dir) : sunsky(ray.dir));
+			return direct + color * (bounces > 0 & reflection_type != SPEC ? sky(ray.dir) : sunsky(ray.dir));
 		}
 
 		glm::vec3 position = ray.orig + ray.dir * distance;
@@ -128,7 +128,7 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 			Triangle* triangle = &(sceneData.CUDACachedBVH.primitives[id]);
 			normal = glm::cross(triangle->e1, triangle->e2);
 			normal = glm::normalize(normal);
-			// color *= glm::vec3(1, 1, 1);
+			color *= glm::vec3(0.7, 0.7, 0.7);
 			reflection_type = DIFF;
 			break;
 		}
@@ -148,8 +148,8 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 
 			// Transform to hemisphere coordinate system
 			const glm::vec3 u = glm::normalize(glm::cross((abs(normal.x) > .1f ? glm::vec3(0.f, 1.f, 0.f)
-																 : glm::vec3(1.f, 0.f, 0.f)),
-											normal));
+																			   : glm::vec3(1.f, 0.f, 0.f)),
+														  normal));
 			const glm::vec3 v = cross(normal, u);
 			// Get sample on hemisphere
 			const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
@@ -164,7 +164,6 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 			if (sunLight > 0.0 && !intersect_scene(shadow_ray, shadow_ray_distance, shadow_ray_id, geometry_type, sceneData)) {
 				direct += color * sun(sunSampleDir) * sunLight * 1E-5f;
 			}
-
 			ray.dir = d;
 			break;
 		}
@@ -211,10 +210,8 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 			//SunLight is cos of sampleDir to normal. For phong we weight it proportional to cos(theta) ^ phongExponent
 			sunLight = powf(sunLight, phongexponent);
 			if (sunLight > 0.0 && !intersect_scene(shadow_ray, shadow_ray_distance, shadow_ray_id, geometry_type, sceneData)) {
-				direct +=  color * sun(sunSampleDir) * sunLight * 1E-5f;
+				direct += color * sun(sunSampleDir) * sunLight * 1E-5f;
 			}
-
-
 
 			/*Offset the origin of the next ray to prevent self intersetion*/
 			ray.orig = ray.orig + w * epsilon; // scene size dependent
