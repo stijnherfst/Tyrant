@@ -10,9 +10,13 @@
 #include "surface_functions.h"
 #include "variables.h"
 
+constexpr int NUM_SPHERES = 7;
+
 surface<void, cudaSurfaceType2D> surf;
 texture<float, cudaTextureTypeCubemap> skybox;
 
+//"Xorshift RNGs" by George Marsaglia
+//http://excamera.com/sphinx/article-xorshift.html
 __device__ unsigned int RandomInt(unsigned int& seed) {
 	seed ^= seed << 13;
 	seed ^= seed >> 17;
@@ -20,6 +24,7 @@ __device__ unsigned int RandomInt(unsigned int& seed) {
 	return seed;
 }
 
+//Random float between [0,1).
 __device__ float RandomFloat(unsigned int& seed) {
 	return RandomInt(seed) * 2.3283064365387e-10f;
 }
@@ -30,7 +35,8 @@ __device__ float RandomFloat2(unsigned int& seed) {
 
 enum Refl_t { DIFF,
 			  SPEC,
-			  REFR };
+			  REFR,
+			  PHONG };
 
 inline __host__ __device__ float dot(const glm::vec4& v1, const glm::vec3& v2) {
 	return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
@@ -39,6 +45,7 @@ inline __host__ __device__ float dot(const glm::vec4& v1, const glm::vec3& v2) {
 struct Sphere {
 	float radius;
 	glm::vec3 position, color;
+	glm::vec3 emmission;
 	Refl_t refl;
 
 	__device__ float intersect(const Ray& r) const {
@@ -69,7 +76,7 @@ struct Sphere {
 	}
 };
 
-__constant__ Sphere spheres[5];
+__constant__ Sphere spheres[NUM_SPHERES];
 
 __device__ inline bool intersect_scene(const Ray& ray, float& t, int& id,
 									   int& geometry_type,
@@ -102,7 +109,7 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 
 	float distance;
 	int id;
-	for (int bounces = 0; bounces < 4; bounces++) {
+	for (int bounces = 0; bounces < 5; bounces++) {
 		if (!intersect_scene(ray, distance, id, geometry_type, sceneData)) {
 			return direct + color * (bounces > 0 ? sky(ray.dir) : sunsky(ray.dir));
 		}
@@ -113,11 +120,11 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 		case 1:
 			const Sphere& object = spheres[id];
 			normal = (position - object.position) / object.radius;
+			direct = direct + (color * object.emmission);
 			color *= object.color;
 			reflection_type = object.refl;
 			break;
 		case 2:
-			//return {255, 0, 0};
 			Triangle* triangle = &(sceneData.CUDACachedBVH.primitives[id]);
 			normal = glm::cross(triangle->e1, triangle->e2);
 			normal = glm::normalize(normal);
@@ -129,7 +136,7 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 		bool outside = dot(normal, ray.dir) < 0;
 		normal = outside
 					 ? normal
-					 : normal * -1.f; // make n front facing is we are inside an object
+					 : normal * -1.f; // make n front facing if we are inside an object
 		ray.orig = position + normal * epsilon;
 
 		switch (reflection_type) {
@@ -163,6 +170,44 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 		}
 		case SPEC: {
 			ray.dir = reflect(ray.dir, normal);
+			break;
+		}
+		case PHONG: {
+			// compute random perturbation of ideal reflection vector
+			// the higher the phong exponent, the closer the perturbed vector
+			// is to the ideal reflection direction
+			float phi = 2 * pi * RandomFloat(seed);
+			float r2 = RandomFloat(seed);
+			float phongexponent = 25;
+			float cosTheta = powf(1 - r2, 1.0f / (phongexponent + 1));
+			float sinTheta = sqrtf(1 - cosTheta * cosTheta);
+
+			/* 
+				Create orthonormal basis uvw around reflection vector with 
+				hitpoint as origin w is ray direction for ideal reflection
+			 */
+			glm::vec3 w;
+			w = ray.dir - normal * 2.0f * dot(normal, ray.dir);
+			w = normalize(w);
+
+			// Transform to hemisphere coordinate system
+			const glm::vec3 u = glm::normalize(
+				glm::cross((abs(normal.x) > .9f ? glm::vec3(0.f, 1.f, 0.f)
+												: glm::vec3(1.f, 0.f, 0.f)),
+						   normal));
+			const glm::vec3 v = cross(w, u);
+			// Get sample on hemisphere
+			// compute cosine weighted random ray direction on hemisphere
+
+			glm::vec3 d = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
+			d = normalize(d);
+
+			/*Offset the origin of the next ray to prevent self intersetion*/
+			ray.orig = ray.orig + w * epsilon; // scene size dependent
+			ray.dir = d;
+
+			//TODO(Dan): Better to place all albedo stuff here?
+			//rayColorMask *= albedo;
 			break;
 		}
 		case REFR: {
@@ -237,13 +282,14 @@ cudaError_t launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer,
 	if (first_time) {
 		first_time = false;
 
-		Sphere sphere_data[5] = { { 16.5, { 0, 40, 16.5f }, { 1, 1, 1 }, DIFF },
-								  { 16.5, { 40, 0, 16.5f }, { 1, 1, 1 }, REFR },
-								  { 16.5, { -40, 0, 16.5f }, { 1, 1, 1 }, SPEC },
-								  { 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, DIFF },
-								  { 40, { 0, -80, 18.0f }, { 1.0, 0.0, 0.0 }, DIFF } };
-
-		cudaMemcpyToSymbol(spheres, sphere_data, 5 * sizeof(Sphere));
+		Sphere sphere_data[NUM_SPHERES] = { { 16.5, { 0, 40, 16.5f }, { 1, 1, 1 }, { 0, 0, 0 }, DIFF },
+											{ 16.5, { 40, 0, 16.5f }, { 1, 1, 1 }, { 0, 0, 0 }, REFR },
+											{ 16.5, { -40, 0, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, PHONG },
+											{ 16.5, { -40, -50, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, SPEC },
+											{ 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, { 0, 0, 0 }, PHONG },
+											{ 20, { 0, -80, 20 }, { 1.0, 0.0, 0.0 }, { 0, 0, 0 }, DIFF },
+											{ 30, { 0, -80, 120.0f }, { 0.0, 0.0, 0.0 }, { 2, 2, 2 }, DIFF } };
+		cudaMemcpyToSymbol(spheres, sphere_data, NUM_SPHERES * sizeof(Sphere));
 
 		float sun_angular = cos(sunSize * pi / 180.0);
 		cuda(MemcpyToSymbol(sunAngularDiameterCos, &sun_angular, sizeof(float)));
@@ -288,7 +334,6 @@ cudaError_t launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer,
 	blit_onto_framebuffer<<<blocks, threads>>>(blit_buffer, hold_frame);
 
 	cuda(DeviceSynchronize());
-
 
 	frame++;
 	hold_frame++;
