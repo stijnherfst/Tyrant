@@ -202,10 +202,23 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 			glm::vec3 d = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
 			d = normalize(d);
 
+			glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
+			float sunLight = dot(normal, sunSampleDir);
+
+			Ray shadow_ray = Ray(position + normal * 0.01f, sunSampleDir);
+			float shadow_ray_distance;
+			int shadow_ray_id;
+			//SunLight is cos of sampleDir to normal. For phong we weight it proportional to cos(theta) ^ phongExponent
+			sunLight = powf(sunLight, phongexponent);
+			if (sunLight > 0.0 && !intersect_scene(shadow_ray, shadow_ray_distance, shadow_ray_id, geometry_type, sceneData)) {
+				direct +=  color * sun(sunSampleDir) * sunLight * 1E-5f;
+			}
+
+
+
 			/*Offset the origin of the next ray to prevent self intersetion*/
 			ray.orig = ray.orig + w * epsilon; // scene size dependent
 			ray.dir = d;
-
 			//TODO(Dan): Better to place all albedo stuff here?
 			//rayColorMask *= albedo;
 			break;
