@@ -111,7 +111,7 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed,
 	int id;
 	for (int bounces = 0; bounces < 5; bounces++) {
 		if (!intersect_scene(ray, distance, id, geometry_type, sceneData)) {
-			return direct + color * (bounces > 0 & reflection_type != SPEC ? sky(ray.dir) : sunsky(ray.dir));
+			return direct + color * (reflection_type != SPEC ? sky(ray.dir) : sunsky(ray.dir));
 		}
 
 		glm::vec3 position = ray.orig + ray.dir * distance;
