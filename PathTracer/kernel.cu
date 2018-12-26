@@ -46,9 +46,20 @@ struct Sphere {
 		float disc = b * b - dot(op, op) + radius * radius;
 		if (disc < 0)
 			return 0;
-		else
-			disc = sqrtf(disc);
+
+		disc = sqrtf(disc);
 		return (t = b - disc) > epsilon ? t : ((t = b + disc) > epsilon ? t : 0);
+	}
+
+	__device__ bool intersect_simple(const ShadowQueue& r) const {
+		glm::vec3 op = position - r.origin;
+		float t;
+		float b = glm::dot(op, r.direction);
+		float disc = b * b - dot(op, op) + radius * radius;
+		if (disc < 0)
+			return false;
+		disc = sqrtf(disc);
+		return (t = b - disc) > epsilon ? true : ((t = b + disc) > epsilon ? true : false);
 	}
 
 	__device__ glm::vec3 random_point(unsigned int& seed) const {
@@ -69,7 +80,32 @@ struct Sphere {
 
 __constant__ Sphere spheres[5];
 
-__device__ inline void intersect_scene(RayQueue& ray, Scene::GPUScene sceneData) {
+__device__ inline bool intersect_scene(RayQueue& ray, Scene::GPUScene sceneData) {
+	float d;
+	ray.distance = 1e20f;
+
+	for (int i = sizeof(spheres) / sizeof(Sphere); i--;) {
+		if ((d = spheres[i].intersect(ray)) && d < ray.distance) {
+			ray.distance = d;
+			ray.identifier = i;
+			ray.geometry_type = 0;
+		}
+	}
+
+	if (sceneData.CUDACachedBVH.intersect(ray)) {
+		ray.geometry_type = 1;
+	}
+	return ray.distance < 1e20f;
+}
+
+__device__ inline bool intersect_scene_simple(ShadowQueue& ray, Scene::GPUScene sceneData) {
+	for (int i = sizeof(spheres) / sizeof(Sphere); i--;) {
+		if (spheres[i].intersect_simple(ray)) {
+			return true;
+		}
+	}
+
+	return sceneData.CUDACachedBVH.intersectSimple(ray);
 }
 
 __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed, Scene::GPUScene sceneData) {
@@ -214,7 +250,8 @@ __global__ void __launch_bounds__(128, 8) extend(RayQueue* queue, Scene::GPUScen
 		RayQueue& ray = queue[index];
 
 		ray.distance = 1e20f;
-		sceneData.CUDACachedBVH.intersect(ray);
+		//sceneData.CUDACachedBVH.intersect(ray);
+		intersect_scene(ray, sceneData);
 	}
 }
 
@@ -239,9 +276,14 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 		unsigned int seed = (frame * ray.x * 147565741) * 720898027 * index;
 
 		if (ray.distance < 1e20f) {
-			Triangle* triangle = &(sceneData.CUDACachedBVH.primitives[ray.identifier]);
-			glm::vec3 normal = glm::cross(triangle->e1, triangle->e2);
-			normal = glm::normalize(normal);
+			glm::vec3 normal;
+			if (ray.geometry_type == 0) {
+				const Sphere& object = spheres[ray.identifier];
+				normal = (ray.origin - object.position) / object.radius;
+			} else {
+				Triangle* triangle = &(sceneData.CUDACachedBVH.primitives[ray.identifier]);
+				normal = glm::normalize(glm::cross(triangle->e1, triangle->e2));
+			}
 
 			bool outside = dot(normal, ray.direction) < 0;
 			normal = outside ? normal : normal * -1.f; // make n front facing is we are inside an object
@@ -257,7 +299,9 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 				unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
 				//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
 				ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
-				if (!sceneData.CUDACachedBVH.intersectSimple(rayy)) {
+				//if (!sceneData.CUDACachedBVH.intersectSimple(rayy)) {
+				if (!intersect_scene_simple(rayy, sceneData)) {
+					
 					color = sun(rayy.direction) * rayy.sunlight * 1E-5f;
 				}
 			}
@@ -298,11 +342,11 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 
 /// Proccess shadow rays
 __global__ void connect(ShadowQueue* queue, Scene::GPUScene sceneData, glm::vec4* blit_buffer) {
-	const int index = blockIdx.x * blockDim.x + threadIdx.x;
+	//const int index = blockIdx.x * blockDim.x + threadIdx.x;
 
-	if (index > shadow_ray_count - 1) {
-		return;
-	}
+	//if (index > shadow_ray_count - 1) {
+	//	return;
+	//}
 
 	//ShadowQueue& ray = queue[index];
 
@@ -337,13 +381,13 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 	if (first_time) {
 		first_time = false;
 
-		//Sphere sphere_data[5] = { { 16.5, { 0, 40, 16.5f }, { 1, 1, 1 }, DIFF },
-		//						  { 16.5, { 40, 0, 16.5f }, { 1, 1, 1 }, REFR },
-		//						  { 16.5, { -40, 0, 16.5f }, { 1, 1, 1 }, SPEC },
-		//						  { 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, DIFF },
-		//						  { 40, { 0, -80, 18.0f }, { 1.0, 0.0, 0.0 }, DIFF } };
+		Sphere sphere_data[5] = { { 16.5, { 0, 40, 16.5f }, { 1, 1, 1 }, DIFF },
+								  { 16.5, { 40, 0, 16.5f }, { 1, 1, 1 }, REFR },
+								  { 16.5, { -40, 0, 16.5f }, { 1, 1, 1 }, SPEC },
+								  { 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, DIFF },
+								  { 40, { 0, -80, 18.0f }, { 1.0, 0.0, 0.0 }, DIFF } };
 
-		//cudaMemcpyToSymbol(spheres, sphere_data, 5 * sizeof(Sphere));
+		cudaMemcpyToSymbol(spheres, sphere_data, 5 * sizeof(Sphere));
 
 		float sun_angular = cos(sunSize * pi / 180.f);
 		cuda(MemcpyToSymbol(sunAngularDiameterCos, &sun_angular, sizeof(float)));

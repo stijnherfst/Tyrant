@@ -24,6 +24,7 @@ struct RayQueue {
 	int bounces;
 	int x;
 	int y;
+	int geometry_type = 1;
 };
 
 struct ShadowQueue {
