@@ -155,7 +155,7 @@ int main(int argc, char* argv[]) {
 #endif
 		camera.update();
 
-		launch_kernels(interop.ca, blit_buffer, scene.gpuScene, ray_queue_buffer, ray_queue_buffer2, shadow_queue_buffer, primary_ray_count, shadow_ray_count);
+		launch_kernels(interop.ca, blit_buffer, scene.gpuScene, ray_queue_buffer, ray_queue_buffer2, shadow_queue_buffer);
 		std::swap(ray_queue_buffer, ray_queue_buffer2);
 		interop.blit();
 

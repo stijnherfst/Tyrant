@@ -22,4 +22,4 @@ struct cuda_interop {
 	void blit();
 };
 
-cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene::GPUScene gpuScene, RayQueue* queue, RayQueue* queue2, ShadowQueue* shadowQueue, unsigned* primary_ray_count, unsigned* shadow_ray_count);
+cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene::GPUScene gpuScene, RayQueue* queue, RayQueue* queue2, ShadowQueue* shadowQueue);

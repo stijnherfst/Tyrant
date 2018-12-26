@@ -6,6 +6,8 @@
 #include "device_launch_parameters.h"
 #include "surface_functions.h"
 
+#include "cuda_definitions.h"
+
 surface<void, cudaSurfaceType2D> surf;
 texture<float, cudaTextureTypeCubemap> skybox;
 
@@ -164,31 +166,41 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed, Scene::GPUScene scen
 	return direct;
 }
 
-/// Generate primary rays
-__global__ void primary_rays(RayQueue* queue, glm::vec3 camera_right, glm::vec3 camera_up, glm::vec3 camera_direction, glm::vec3 O, int start_index, int start_position) {
-	const int index = blockIdx.x * blockDim.x + threadIdx.x;
-
-	if (start_index + index > ray_queue_buffer_size - 1) {
-		return;
-	}
-
-	const int x = ((start_position + index) % render_width);
-	const int y = ((start_position + index) / render_width) % render_height;
-
-	const float normalized_i = (x / (float)render_width) - 0.5f;
-	const float normalized_j = ((render_height - y) / (float)render_height) - 0.5f;
-
-	glm::vec3 direction = camera_direction + normalized_i * camera_right + normalized_j * camera_up;
-	direction = normalize(direction);
-
-	queue[start_index + index] = { O, direction, { 0, 0, 0 }, 0, 0, 0, x, y };
-}
-
+__device__ unsigned int shadow_ray_cnt = 0;
+__device__ unsigned int primary_ray_cnt = 0;
+__device__ unsigned int start_position = 0;
 __device__ unsigned int raynr = 0;
 
-//__launch_bounds__(128, 8)
+/// Generate primary rays
+__global__ void primary_rays(RayQueue* queue, glm::vec3 camera_right, glm::vec3 camera_up, glm::vec3 camera_direction, glm::vec3 O) {
+	if (blockIdx.x == 0 && threadIdx.x == 0) {
+		raynr = 0;
+		start_position += ray_queue_buffer_size - primary_ray_cnt;
+		start_position = start_position % (render_width * render_height);
+	}
+
+	while (true) {
+		unsigned int index = atomicAdd(&raynr, 1);
+
+		if (primary_ray_cnt + index > ray_queue_buffer_size - 1) {
+			return;
+		}
+
+		const int x = ((start_position + index) % render_width);
+		const int y = ((start_position + index) / render_width) % render_height;
+
+		const float normalized_i = (x / (float)render_width) - 0.5f;
+		const float normalized_j = ((render_height - y) / (float)render_height) - 0.5f;
+
+		glm::vec3 direction = camera_direction + normalized_i * camera_right + normalized_j * camera_up;
+		direction = normalize(direction);
+
+		queue[primary_ray_cnt + index] = { O, direction, { 0, 0, 0 }, 0, 0, 0, x, y };
+	}
+}
+
 /// Advance the ray segments once
-__global__ void extend(RayQueue* queue, Scene::GPUScene sceneData) {
+__global__ void __launch_bounds__(128, 8) extend(RayQueue* queue, Scene::GPUScene sceneData) {
 	if (blockIdx.x == 0 && threadIdx.x == 0) {
 		raynr = 0;
 	}
@@ -207,80 +219,85 @@ __global__ void extend(RayQueue* queue, Scene::GPUScene sceneData) {
 }
 
 /// Process collisions and spawn extension and shadow rays
-__global__ void shade(RayQueue* queue, RayQueue* queue2, ShadowQueue* shadowQueue, Scene::GPUScene sceneData, glm::vec4* blit_buffer, unsigned int frame, unsigned* primary_ray_count, unsigned* shadow_ray_count) {
-	const int index = blockIdx.x * blockDim.x + threadIdx.x;
-
-	if (index > ray_queue_buffer_size - 1) {
-		return;
+__global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue2, ShadowQueue* shadowQueue, Scene::GPUScene sceneData, glm::vec4* blit_buffer, unsigned int frame) {
+	if (blockIdx.x == 0 && threadIdx.x == 0) {
+		raynr = 0;
+		shadow_ray_cnt = 0;
+		primary_ray_cnt = 0;
 	}
 
-	int new_frame = 0;
-	RayQueue& ray = queue[index];
-	glm::vec3 color = glm::vec3(0.f);
-	unsigned int seed = (frame * ray.x * 147565741) * 720898027 * index;
+	while (true) {
+		unsigned int index = atomicAdd(&raynr, 1);
 
-	if (ray.distance < 1e20f) {
-		Triangle* triangle = &(sceneData.CUDACachedBVH.primitives[ray.identifier]);
-		glm::vec3 normal = glm::cross(triangle->e1, triangle->e2);
-		normal = glm::normalize(normal);
-
-		bool outside = dot(normal, ray.direction) < 0;
-		normal = outside ? normal : normal * -1.f; // make n front facing is we are inside an object
-
-		ray.origin += ray.direction * ray.distance + normal * epsilon;
-
-		// Generate new shadow ray
-		glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
-		float sunLight = dot(normal, sunSampleDir);
-
-		// < 0.f means sun is behind the surface
-		if (sunLight > 0.f) {
-			unsigned shadow_index = atomicInc(shadow_ray_count, 999999999);
-			//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
-			ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
-			if (!sceneData.CUDACachedBVH.intersectSimple(rayy)) {
-				color = sun(rayy.direction) * rayy.sunlight * 1E-5f;
-				//primary_queue[ray.primary_index].direct += color;
-			}
+		if (index > ray_queue_buffer_size - 1) {
+			return;
 		}
 
-		if (ray.bounces < 4) {
-			// Generate new extension ray
-			float r1 = 2.f * pi * RandomFloat(seed);
-			float r2 = RandomFloat(seed);
-			float r2s = sqrt(r2);
+		int new_frame = 0;
+		RayQueue& ray = queue[index];
+		glm::vec3 color = glm::vec3(0.f);
+		unsigned int seed = (frame * ray.x * 147565741) * 720898027 * index;
 
-			// Transform to hemisphere coordinate system
-			const glm::vec3 u = glm::normalize(glm::cross((abs(normal.x) > .1f ? glm::vec3(0.f, 1.f, 0.f) : glm::vec3(1.f, 0.f, 0.f)), normal));
-			const glm::vec3 v = cross(normal, u);
-			// Get sample on hemisphere
-			const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
-			ray.direction = d;
-			ray.bounces++;
+		if (ray.distance < 1e20f) {
+			Triangle* triangle = &(sceneData.CUDACachedBVH.primitives[ray.identifier]);
+			glm::vec3 normal = glm::cross(triangle->e1, triangle->e2);
+			normal = glm::normalize(normal);
 
-			unsigned primary_index = atomicInc(primary_ray_count, 999999999);
-			queue2[primary_index] = ray;
+			bool outside = dot(normal, ray.direction) < 0;
+			normal = outside ? normal : normal * -1.f; // make n front facing is we are inside an object
+
+			ray.origin += ray.direction * ray.distance + normal * epsilon;
+
+			// Generate new shadow ray
+			glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
+			float sunLight = dot(normal, sunSampleDir);
+
+			// < 0.f means sun is behind the surface
+			if (sunLight > 0.f) {
+				unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+				//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
+				ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
+				if (!sceneData.CUDACachedBVH.intersectSimple(rayy)) {
+					color = sun(rayy.direction) * rayy.sunlight * 1E-5f;
+				}
+			}
+
+			if (ray.bounces < 4) {
+				// Generate new extension ray
+				float r1 = 2.f * pi * RandomFloat(seed);
+				float r2 = RandomFloat(seed);
+				float r2s = sqrt(r2);
+
+				// Transform to hemisphere coordinate system
+				const glm::vec3 u = glm::normalize(glm::cross((abs(normal.x) > .1f ? glm::vec3(0.f, 1.f, 0.f) : glm::vec3(1.f, 0.f, 0.f)), normal));
+				const glm::vec3 v = cross(normal, u);
+				// Get sample on hemisphere
+				const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
+				ray.direction = d;
+				ray.bounces++;
+
+				unsigned primary_index = atomicAdd(&primary_ray_cnt, 1);
+				queue2[primary_index] = ray;
+			} else {
+
+				new_frame++;
+			}
+
 		} else {
-
+			// Don't generate new extended ray
+			color = ray.bounces > 0 ? sky(ray.direction) : sunsky(ray.direction);
 			new_frame++;
 		}
 
-	} else {
-		// Don't generate new extended ray
-		color = ray.bounces > 0 ? sky(ray.direction) : sunsky(ray.direction);
-		new_frame++;
+		atomicAdd(&blit_buffer[ray.y * render_width + ray.x].r, color.r);
+		atomicAdd(&blit_buffer[ray.y * render_width + ray.x].g, color.g);
+		atomicAdd(&blit_buffer[ray.y * render_width + ray.x].b, color.b);
+		atomicAdd(&blit_buffer[ray.y * render_width + ray.x].a, new_frame);
 	}
-
-	atomicAdd(&blit_buffer[ray.y * render_width + ray.x].r, color.r);
-	atomicAdd(&blit_buffer[ray.y * render_width + ray.x].g, color.g);
-	atomicAdd(&blit_buffer[ray.y * render_width + ray.x].b, color.b);
-	atomicAdd(&blit_buffer[ray.y * render_width + ray.x].a, new_frame);
-
-	//blit_buffer[ray.y * render_width + ray.x] += glm::vec4(color, new_frame);
 }
 
 /// Proccess shadow rays
-__global__ void connect(ShadowQueue* queue, Scene::GPUScene sceneData, glm::vec4* blit_buffer, int shadow_ray_count) {
+__global__ void connect(ShadowQueue* queue, Scene::GPUScene sceneData, glm::vec4* blit_buffer) {
 	const int index = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if (index > shadow_ray_count - 1) {
@@ -315,13 +332,8 @@ __global__ void blit_onto_framebuffer(glm::vec4* blit_buffer) {
 bool first_time = true;
 bool reset_buffer = false;
 unsigned int frame = 0;
-//unsigned int hold_frame = 0;
 
-int host_shadow_rays = 0;
-int host_primary_rays = 0;
-int start_position = 0;
-
-cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene::GPUScene sceneData, RayQueue* queue, RayQueue* queue2, ShadowQueue* shadow_queue, unsigned* primary_ray_count, unsigned* shadow_ray_count) {
+cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene::GPUScene sceneData, RayQueue* queue, RayQueue* queue2, ShadowQueue* shadow_queue) {
 	if (first_time) {
 		first_time = false;
 
@@ -363,38 +375,20 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 	if (reset_buffer) {
 		reset_buffer = false;
 		cudaMemset(blit_buffer, 0, render_width * render_height * sizeof(float4));
-		//hold_frame = 1;
-		host_primary_rays = 0;
+
+		int new_value = 0;
+		cuda(MemcpyToSymbol(primary_ray_cnt, &new_value, sizeof(int)));
 	}
 
-	int primary_blocks = ceil((ray_queue_buffer_size - host_primary_rays) / 32.f);
-	primary_rays<<<primary_blocks, 32>>>(queue, camera_right, camera_up, camera.direction, camera.position, host_primary_rays, start_position);
-
-	start_position += ray_queue_buffer_size - host_primary_rays;
-	start_position = start_position % (render_width * render_height);
-
-	cudaMemset(primary_ray_count, 0, sizeof(unsigned));
-	cudaMemset(shadow_ray_count, 0, sizeof(unsigned));
-	
-	int primary_blocks2 = ceil(ray_queue_buffer_size / 32.f);
-
-
+	primary_rays<<<40, 128>>>(queue, camera_right, camera_up, camera.direction, camera.position);
 	extend<<<40, 128>>>(queue, sceneData);
+	shade<<<40, 128>>>(queue, queue2, shadow_queue, sceneData, blit_buffer, frame);
+	//connect<<<40, 128>>>(shadow_queue, sceneData, blit_buffer);
 
-	shade<<<primary_blocks2, 32>>>(queue, queue2, shadow_queue, sceneData, blit_buffer, frame, primary_ray_count, shadow_ray_count);
-
-	cudaMemcpy(&host_shadow_rays, &shadow_ray_count[0], sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(&host_primary_rays, &primary_ray_count[0], sizeof(int), cudaMemcpyDeviceToHost);
-
-	//int tt = ceil(host_shadow_rays / 32.f);
-	//connect<<<tt, 32>>>(shadowQueue, sceneData, blit_buffer, host_shadow_rays);
 
 	dim3 threads = dim3(16, 16, 1);
 	dim3 blocks = dim3(render_width / threads.x, render_height / threads.y, 1);
 	blit_onto_framebuffer<<<blocks, threads>>>(blit_buffer);
-
-	//std::cout << host_primary_rays << " \t " << start_position << "\n";
-	//std::cout << "Shadow: " << host_shadow_rays << " Primary: " << host_primary_rays << "\n";
 
 	cuda(DeviceSynchronize());
 	frame++;

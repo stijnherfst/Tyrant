@@ -89,6 +89,9 @@
     <ClInclude Include="performance_measure.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="cuda_definitions.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="assert_cuda.cpp">
