@@ -53,24 +53,17 @@ void Scene::Load(const char path[]) {
 	}
 	BVH bvh(primitives, primitiveBBoxes, PartitionAlgorithm::SAH);
 
-	CachedBVH cachedBVH(bvh.nNodes, primitives);
-
-	int offset = 0;
-	cachedBVH.buildCachedBVH(bvh.root, offset);
+	CachedBVH cachedBVH;
 
 	cuda(Malloc(&cachedBVH.primitives, primitives.size() * sizeof(Triangle)));
 	cuda(Memcpy(&cachedBVH.primitives[0], &primitives[0],
 				primitives.size() * sizeof(Triangle),
 				cudaMemcpyKind::cudaMemcpyHostToDevice));
 
-	CachedBVH::CachedBVHNode* tempNodes;
-	cuda(Malloc(&tempNodes, bvh.nNodes * sizeof(CachedBVH::CachedBVHNode)));
-	cuda(Memcpy(tempNodes, cachedBVH.nodes,
-				bvh.nNodes * sizeof(CachedBVH::CachedBVHNode),
+	cuda(Malloc(&cachedBVH.nodes, bvh.nNodes * sizeof(BVH::BVHNode)));
+	cuda(Memcpy(cachedBVH.nodes, bvh.nodes.data(),
+				bvh.nNodes * sizeof(BVH::BVHNode),
 				cudaMemcpyKind::cudaMemcpyHostToDevice));
 
-	delete[] cachedBVH.nodes;
-
-	cachedBVH.nodes = tempNodes;
 	gpuScene.CUDACachedBVH = cachedBVH;
 }
