@@ -233,9 +233,9 @@ __device__ unsigned int raynr_extend = 0;
 
 __global__ void zero_variables () {
 	shadow_ray_cnt = 0;
-  primary_ray_cnt = 0;
 	start_position += ray_queue_buffer_size - primary_ray_cnt;
 	start_position = start_position % (render_width * render_height);
+	primary_ray_cnt = 0;
 	raynr_shade = 0;
 	raynr_primary = 0;
 	raynr_extend = 0;
