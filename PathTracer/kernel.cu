@@ -8,6 +8,9 @@
 
 #include "cuda_definitions.h"
 
+
+constexpr int NUM_SPHERES = 7;
+
 surface<void, cudaSurfaceType2D> surf;
 texture<float, cudaTextureTypeCubemap> skybox;
 
@@ -28,7 +31,8 @@ __device__ float RandomFloat2(unsigned int& seed) {
 
 enum Refl_t { DIFF,
 			  SPEC,
-			  REFR };
+			  REFR,
+			  PHONG};
 
 inline __host__ __device__ float dot(const glm::vec4& v1, const glm::vec3& v2) {
 	return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
@@ -37,6 +41,7 @@ inline __host__ __device__ float dot(const glm::vec4& v1, const glm::vec3& v2) {
 struct Sphere {
 	float radius;
 	glm::vec3 position, color;
+	glm::vec3 emmission;
 	Refl_t refl;
 
 	__device__ float intersect(const RayQueue& r) const {
@@ -51,15 +56,27 @@ struct Sphere {
 		return (t = b - disc) > epsilon ? t : ((t = b + disc) > epsilon ? t : 0);
 	}
 
-	__device__ bool intersect_simple(const ShadowQueue& r) const {
+	//__device__ bool intersect_simple(const ShadowQueue& r) const {
+	//	glm::vec3 op = position - r.origin;
+	//	float t;
+	//	float b = glm::dot(op, r.direction);
+	//	float disc = b * b - dot(op, op) + radius * radius;
+	//	if (disc < 0)
+	//		return false;
+	//	disc = sqrtf(disc);
+	//	return (t = b - disc) > epsilon ? true : ((t = b + disc) > epsilon ? true : false);
+	//}
+
+	__device__ float intersect_simple(const ShadowQueue& r) const {
 		glm::vec3 op = position - r.origin;
 		float t;
 		float b = glm::dot(op, r.direction);
 		float disc = b * b - dot(op, op) + radius * radius;
 		if (disc < 0)
-			return false;
+			return 0;
+
 		disc = sqrtf(disc);
-		return (t = b - disc) > epsilon ? true : ((t = b + disc) > epsilon ? true : false);
+		return (t = b - disc) > epsilon ? t : ((t = b + disc) > epsilon ? t : 0);
 	}
 
 	__device__ glm::vec3 random_point(unsigned int& seed) const {
@@ -78,13 +95,14 @@ struct Sphere {
 	}
 };
 
-__constant__ Sphere spheres[5];
+__constant__ Sphere spheres[NUM_SPHERES];
 
 __device__ inline bool intersect_scene(RayQueue& ray, Scene::GPUScene sceneData) {
 	float d;
 	ray.distance = 1e20f;
 
-	for (int i = sizeof(spheres) / sizeof(Sphere); i--;) {
+	for (int i = NUM_SPHERES; i--;) {
+		//d = spheres[i].intersect(ray);
 		if ((d = spheres[i].intersect(ray)) && d < ray.distance) {
 			ray.distance = d;
 			ray.identifier = i;
@@ -99,8 +117,9 @@ __device__ inline bool intersect_scene(RayQueue& ray, Scene::GPUScene sceneData)
 }
 
 __device__ inline bool intersect_scene_simple(ShadowQueue& ray, Scene::GPUScene sceneData) {
-	for (int i = sizeof(spheres) / sizeof(Sphere); i--;) {
-		if (spheres[i].intersect_simple(ray)) {
+	for (int i = NUM_SPHERES; i--;) {
+		float d = spheres[i].intersect_simple(ray);
+		if (d != 0) {
 			return true;
 		}
 	}
@@ -231,7 +250,7 @@ __global__ void primary_rays(RayQueue* queue, glm::vec3 camera_right, glm::vec3 
 		glm::vec3 direction = camera_direction + normalized_i * camera_right + normalized_j * camera_up;
 		direction = normalize(direction);
 
-		queue[primary_ray_cnt + index] = { O, direction, { 0, 0, 0 }, 0, 0, 0, x, y };
+		queue[primary_ray_cnt + index] = { O, direction, { 1, 1, 1 }, 0, 0, 0, x, y };
 	}
 }
 
@@ -273,51 +292,139 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 		int new_frame = 0;
 		RayQueue& ray = queue[index];
 		glm::vec3 color = glm::vec3(0.f);
+
 		unsigned int seed = (frame * ray.x * 147565741) * 720898027 * index;
+		int reflection_type = DIFF;
 
 		if (ray.distance < 1e20f) {
+			ray.origin += ray.direction * ray.distance;
+
 			glm::vec3 normal;
 			if (ray.geometry_type == 0) {
 				const Sphere& object = spheres[ray.identifier];
 				normal = (ray.origin - object.position) / object.radius;
+				reflection_type = object.refl;
+				ray.direct *= object.color;
 			} else {
 				Triangle* triangle = &(sceneData.CUDACachedBVH.primitives[ray.identifier]);
 				normal = glm::normalize(glm::cross(triangle->e1, triangle->e2));
+				reflection_type = DIFF;
 			}
 
 			bool outside = dot(normal, ray.direction) < 0;
 			normal = outside ? normal : normal * -1.f; // make n front facing is we are inside an object
 
-			ray.origin += ray.direction * ray.distance + normal * epsilon;
+			ray.origin += normal * epsilon;
 
-			// Generate new shadow ray
-			glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
-			float sunLight = dot(normal, sunSampleDir);
+			switch (reflection_type) {
+				case DIFF: {
+			
+					// Generate new shadow ray
+					glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
+					float sunLight = dot(normal, sunSampleDir);
 
-			// < 0.f means sun is behind the surface
-			if (sunLight > 0.f) {
-				unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
-				//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
-				ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
-				//if (!sceneData.CUDACachedBVH.intersectSimple(rayy)) {
-				if (!intersect_scene_simple(rayy, sceneData)) {
-					
-					color = sun(rayy.direction) * rayy.sunlight * 1E-5f;
+					// < 0.f means sun is behind the surface
+					if (sunLight > 0.f) {
+						unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+						//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
+						ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
+
+						if (!intersect_scene_simple(rayy, sceneData)) {
+							color = ray.direct * (sun(rayy.direction) * rayy.sunlight * 1E-5f);
+						}
+					}
+
+					if (ray.bounces < 5) {
+						float r1 = 2.f * pi * RandomFloat(seed);
+						float r2 = RandomFloat(seed);
+						float r2s = sqrt(r2);
+
+						// Transform to hemisphere coordinate system
+						const glm::vec3 u = glm::normalize(glm::cross((abs(normal.x) > .1f ? glm::vec3(0.f, 1.f, 0.f) : glm::vec3(1.f, 0.f, 0.f)), normal));
+						const glm::vec3 v = cross(normal, u);
+						// Get sample on hemisphere
+						const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
+						ray.direction = d;
+					}
+
+					break;
 				}
+				case SPEC:
+					ray.direction = reflect(ray.direction, normal);
+					break;
+				case REFR: {
+				
+					float n1 = outside ? 1.2f : 1.0f;
+					float n2 = outside ? 1.0f : 1.2f;
+
+					float r0 = (n1 - n2) / (n1 + n2);
+					r0 *= r0;
+					float fresnel = r0 + (1. - r0) * pow(1.0 - abs(dot(ray.direction, normal)), 5.);
+
+					if (RandomFloat(seed) < fresnel) {
+						ray.direction = reflect(ray.direction, normal);
+					} else {
+						ray.origin = ray.origin - normal * 2.f * epsilon;
+						ray.direction = glm::refract(ray.direction, normal, n2 / n1);
+					}
+					break;
+				}
+				case PHONG: {
+					// compute random perturbation of ideal reflection vector
+					// the higher the phong exponent, the closer the perturbed vector
+					// is to the ideal reflection direction
+					float phi = 2 * pi * RandomFloat(seed);
+					float r2 = RandomFloat(seed);
+					float phongexponent = 25;
+					float cosTheta = powf(1 - r2, 1.0f / (phongexponent + 1));
+					float sinTheta = sqrtf(1 - cosTheta * cosTheta);
+
+					/* 
+				Create orthonormal basis uvw around reflection vector with 
+				hitpoint as origin w is ray direction for ideal reflection
+			 */
+					glm::vec3 w;
+					w = ray.direction - normal * 2.0f * dot(normal, ray.direction);
+					w = normalize(w);
+
+					// Transform to hemisphere coordinate system
+					const glm::vec3 u = glm::normalize(
+						glm::cross((abs(normal.x) > .9f ? glm::vec3(0.f, 1.f, 0.f)
+														: glm::vec3(1.f, 0.f, 0.f)),
+								   normal));
+					const glm::vec3 v = cross(w, u);
+					// Get sample on hemisphere
+					// compute cosine weighted random ray direction on hemisphere
+
+					glm::vec3 d = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
+					d = normalize(d);
+
+					glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
+					float sunLight = dot(normal, sunSampleDir);
+
+					//SunLight is cos of sampleDir to normal. For phong we weight it proportional to cos(theta) ^ phongExponent
+					sunLight = powf(sunLight, phongexponent);
+					if (sunLight > 0.f) {
+						unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+						//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
+						ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
+
+						if (!intersect_scene_simple(rayy, sceneData)) {
+							color = ray.direct * (sun(rayy.direction) * rayy.sunlight * 1E-5f);
+						}
+					}
+
+					ray.origin = ray.origin + w * epsilon; // scene size dependent
+					ray.direction = d;
+					//TODO(Dan): Better to place all albedo stuff here?
+					//rayColorMask *= albedo;
+					break;
+				}
+
 			}
 
-			if (ray.bounces < 4) {
-				// Generate new extension ray
-				float r1 = 2.f * pi * RandomFloat(seed);
-				float r2 = RandomFloat(seed);
-				float r2s = sqrt(r2);
 
-				// Transform to hemisphere coordinate system
-				const glm::vec3 u = glm::normalize(glm::cross((abs(normal.x) > .1f ? glm::vec3(0.f, 1.f, 0.f) : glm::vec3(1.f, 0.f, 0.f)), normal));
-				const glm::vec3 v = cross(normal, u);
-				// Get sample on hemisphere
-				const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
-				ray.direction = d;
+			if (ray.bounces < 5) {
 				ray.bounces++;
 
 				unsigned primary_index = atomicAdd(&primary_ray_cnt, 1);
@@ -329,7 +436,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 
 		} else {
 			// Don't generate new extended ray
-			color = ray.bounces > 0 ? sky(ray.direction) : sunsky(ray.direction);
+			color = ray.bounces > 0 ? ray.direct * sky(ray.direction) : sunsky(ray.direction);
 			new_frame++;
 		}
 
@@ -381,13 +488,15 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 	if (first_time) {
 		first_time = false;
 
-		Sphere sphere_data[5] = { { 16.5, { 0, 40, 16.5f }, { 1, 1, 1 }, DIFF },
-								  { 16.5, { 40, 0, 16.5f }, { 1, 1, 1 }, REFR },
-								  { 16.5, { -40, 0, 16.5f }, { 1, 1, 1 }, SPEC },
-								  { 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, DIFF },
-								  { 40, { 0, -80, 18.0f }, { 1.0, 0.0, 0.0 }, DIFF } };
+		Sphere sphere_data[NUM_SPHERES] = { { 16.5, { 0, 40, 16.5f }, { 1, 1, 1 }, { 0, 0, 0 }, DIFF },
+											{ 16.5, { 40, 0, 16.5f }, { 1, 1, 1 }, { 0, 0, 0 }, REFR },
+											{ 16.5, { -40, 0, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, PHONG },
+											{ 16.5, { -40, -50, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, SPEC },
+											{ 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, { 0, 0, 0 }, PHONG },
+											{ 20, { 0, -80, 20 }, { 1.0, 0.0, 0.0 }, { 0, 0, 0 }, DIFF },
+											{ 30, { 0, -80, 120.0f }, { 0.0, 1.0, 0.0 }, { 2, 2, 2 }, DIFF } };
 
-		cudaMemcpyToSymbol(spheres, sphere_data, 5 * sizeof(Sphere));
+		cudaMemcpyToSymbol(spheres, sphere_data, NUM_SPHERES * sizeof(Sphere));
 
 		float sun_angular = cos(sunSize * pi / 180.f);
 		cuda(MemcpyToSymbol(sunAngularDiameterCos, &sun_angular, sizeof(float)));
