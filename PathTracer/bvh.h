@@ -172,7 +172,7 @@ public:
 		int toVisitOffset = 0, currentNodeIndex = 0;
 		int nodesToVisit[64];
 		while (true) {
-			const CachedBVHNode* node = &nodes[currentNodeIndex];
+			const auto* node = &nodes[currentNodeIndex];
 			// Check ray against BVH node
 			if (node->bbox.intersect(ray.origin, invDir, dirIsNeg, closestIntersection)) {
 				if (node->primitiveCount > 0) {
@@ -189,7 +189,7 @@ public:
 					currentNodeIndex = nodesToVisit[--toVisitOffset];
 				} else {
 					// Choose which one to visit by looking at ray direction
-					if (dirIsNeg[node->axis]) {
+					if (dirIsNeg[node->splitAxis]) {
 						nodesToVisit[toVisitOffset++] = currentNodeIndex + 1;
 						currentNodeIndex = node->secondChildOffset;
 					} else {

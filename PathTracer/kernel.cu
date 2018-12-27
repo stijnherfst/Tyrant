@@ -11,8 +11,6 @@
 
 constexpr int NUM_SPHERES = 7;
 
-constexpr int NUM_SPHERES = 7;
-
 surface<void, cudaSurfaceType2D> surf;
 texture<float, cudaTextureTypeCubemap> skybox;
 
