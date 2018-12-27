@@ -227,18 +227,32 @@ __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed, Scene::GPUScene scen
 __device__ unsigned int shadow_ray_cnt = 0;
 __device__ unsigned int primary_ray_cnt = 0;
 __device__ unsigned int start_position = 0;
-__device__ unsigned int raynr = 0;
+__device__ unsigned int raynr_shade = 0;
+__device__ unsigned int raynr_primary = 0;
+__device__ unsigned int raynr_extend = 0;
+
+__global__ void zero_variables () {
+	shadow_ray_cnt = 0;
+  primary_ray_cnt = 0;
+	start_position += ray_queue_buffer_size - primary_ray_cnt;
+	start_position = start_position % (render_width * render_height);
+	raynr_shade = 0;
+	raynr_primary = 0;
+	raynr_extend = 0;
+
+}
+
 
 /// Generate primary rays
 __global__ void primary_rays(RayQueue* queue, glm::vec3 camera_right, glm::vec3 camera_up, glm::vec3 camera_direction, glm::vec3 O) {
-	if (blockIdx.x == 0 && threadIdx.x == 0) {
-		raynr = 0;
-		start_position += ray_queue_buffer_size - primary_ray_cnt;
-		start_position = start_position % (render_width * render_height);
-	}
+	//if (blockIdx.x == 0 && threadIdx.x == 0) {
+	//	raynr_primary = 0;
+	//	start_position += ray_queue_buffer_size - primary_ray_cnt;
+	//	start_position = start_position % (render_width * render_height);
+	//}
 
 	while (true) {
-		unsigned int index = atomicAdd(&raynr, 1);
+		unsigned int index = atomicAdd(&raynr_primary, 1);
 
 		if (primary_ray_cnt + index > ray_queue_buffer_size - 1) {
 			return;
@@ -259,11 +273,11 @@ __global__ void primary_rays(RayQueue* queue, glm::vec3 camera_right, glm::vec3 
 
 /// Advance the ray segments once
 __global__ void __launch_bounds__(128, 8) extend(RayQueue* queue, Scene::GPUScene sceneData) {
-	if (blockIdx.x == 0 && threadIdx.x == 0) {
-		raynr = 0;
-	}
+	//if (blockIdx.x == 0 && threadIdx.x == 0) {
+	//	raynr_extend = 0;
+	//}
 	while (true) {
-		unsigned int index = atomicAdd(&raynr, 1);
+		unsigned int index = atomicAdd(&raynr_extend, 1);
 
 		if (index > ray_queue_buffer_size - 1) {
 			return;
@@ -279,14 +293,14 @@ __global__ void __launch_bounds__(128, 8) extend(RayQueue* queue, Scene::GPUScen
 
 /// Process collisions and spawn extension and shadow rays
 __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue2, ShadowQueue* shadowQueue, Scene::GPUScene sceneData, glm::vec4* blit_buffer, unsigned int frame) {
-	if (blockIdx.x == 0 && threadIdx.x == 0) {
-		raynr = 0;
-		shadow_ray_cnt = 0;
-		primary_ray_cnt = 0;
-	}
+	//if (blockIdx.x == 0 && threadIdx.x == 0) {
+	//	raynr_shade = 0;
+	//	shadow_ray_cnt = 0;
+	//	primary_ray_cnt = 0;
+	//}
 
 	while (true) {
-		unsigned int index = atomicAdd(&raynr, 1);
+		unsigned int index = atomicAdd(&raynr_shade, 1);
 
 		if (index > ray_queue_buffer_size - 1) {
 			return;
@@ -300,6 +314,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 		int reflection_type = DIFF;
 
 		if (ray.distance < 1e20f) {
+		  //ray.lastSpecular = true;
 			ray.origin += ray.direction * ray.distance;
 
 			glm::vec3 normal;
@@ -307,6 +322,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 				const Sphere& object = spheres[ray.identifier];
 				normal = (ray.origin - object.position) / object.radius;
 				reflection_type = object.refl;
+				color = color + (ray.direct * object.emmission);
 				ray.direct *= object.color;
 			} else {
 				Triangle* triangle = &(sceneData.CUDACachedBVH.primitives[ray.identifier]);
@@ -321,6 +337,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 
 			switch (reflection_type) {
 				case DIFF: {
+				ray.lastSpecular = false;
 			
 					// Generate new shadow ray
 					glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
@@ -333,7 +350,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 						ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
 
 						if (!intersect_scene_simple(rayy, sceneData)) {
-							color = ray.direct * (sun(rayy.direction) * rayy.sunlight * 1E-5f);
+							color += ray.direct * (sun(rayy.direction) * rayy.sunlight * 1E-5f);
 						}
 					}
 
@@ -354,8 +371,10 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 				}
 				case SPEC:
 					ray.direction = reflect(ray.direction, normal);
+					ray.lastSpecular = true;
 					break;
 				case REFR: {
+					ray.lastSpecular = false;
 				
 					float n1 = outside ? 1.2f : 1.0f;
 					float n2 = outside ? 1.0f : 1.2f;
@@ -373,6 +392,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 					break;
 				}
 				case PHONG: {
+					ray.lastSpecular = false;
 					// compute random perturbation of ideal reflection vector
 					// the higher the phong exponent, the closer the perturbed vector
 					// is to the ideal reflection direction
@@ -413,7 +433,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 						ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
 
 						if (!intersect_scene_simple(rayy, sceneData)) {
-							color = ray.direct * (sun(rayy.direction) * rayy.sunlight * 1E-5f);
+							color += ray.direct * (sun(rayy.direction) * rayy.sunlight * 1E-5f);
 						}
 					}
 
@@ -439,7 +459,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 
 		} else {
 			// Don't generate new extended ray
-			color = ray.bounces > 0 ? ray.direct * sky(ray.direction) : sunsky(ray.direction);
+			color += (ray.lastSpecular == false) ? ray.direct * sky(ray.direction) : ray.direct *  sunsky(ray.direction);
 			new_frame++;
 		}
 
@@ -536,6 +556,7 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 	}
 
 	primary_rays<<<40, 128>>>(queue, camera_right, camera_up, camera.direction, camera.position);
+	zero_variables<<<1, 1>>>();
 	extend<<<40, 128>>>(queue, sceneData);
 	shade<<<40, 128>>>(queue, queue2, shadow_queue, sceneData, blit_buffer, frame);
 	//connect<<<40, 128>>>(shadow_queue, sceneData, blit_buffer);

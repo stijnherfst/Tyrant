@@ -25,6 +25,7 @@ struct RayQueue {
 	int x;
 	int y;
 	int geometry_type = 1;
+	bool lastSpecular = true;
 };
 
 struct ShadowQueue {

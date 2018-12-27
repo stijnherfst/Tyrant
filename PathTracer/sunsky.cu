@@ -155,7 +155,7 @@ __device__ glm::vec3 sunsky(glm::vec3 viewDir) {
 	// composition + solar disc
 	float sundisk = glm::smoothstep(
 		sunAngularDiameterCos, sunAngularDiameterCos + 0.00002f, cosViewSunAngle);
-	glm::vec3 sun = (sunE * 19000.0f * Fex) * sundisk;
+	glm::vec3 sun = (sunE * 19000.0f * Fex) * sundisk * 1E-5f;
 
 	return 0.01f * (sun + sky);
 }
