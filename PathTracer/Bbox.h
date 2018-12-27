@@ -23,6 +23,7 @@ struct BBox {
 		return d.x * d.y * d.z;
 	}
 
+	//Calculates which dimension is largest for the bbox 
 	__host__ int largestExtent() const {
 		glm::vec3 d = diagonal();
 		if (d.x > d.y && d.x > d.z)

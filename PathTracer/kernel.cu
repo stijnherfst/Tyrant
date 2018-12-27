@@ -11,9 +11,13 @@
 
 constexpr int NUM_SPHERES = 7;
 
+constexpr int NUM_SPHERES = 7;
+
 surface<void, cudaSurfaceType2D> surf;
 texture<float, cudaTextureTypeCubemap> skybox;
 
+//"Xorshift RNGs" by George Marsaglia
+//http://excamera.com/sphinx/article-xorshift.html
 __device__ unsigned int RandomInt(unsigned int& seed) {
 	seed ^= seed << 13;
 	seed ^= seed >> 17;
@@ -21,6 +25,7 @@ __device__ unsigned int RandomInt(unsigned int& seed) {
 	return seed;
 }
 
+//Random float between [0,1).
 __device__ float RandomFloat(unsigned int& seed) {
 	return RandomInt(seed) * 2.3283064365387e-10f;
 }
@@ -130,7 +135,7 @@ __device__ inline bool intersect_scene_simple(ShadowQueue& ray, Scene::GPUScene 
 __device__ glm::vec3 radiance(Ray& ray, unsigned int& seed, Scene::GPUScene sceneData) {
 	//glm::vec3 color = { 1.f, 1.f, 1.f };
 	glm::vec3 direct = { 0.f, 0.f, 0.f };
-
+  
 	//int geometry_type = 0;
 	//int reflection_type;
 
@@ -495,7 +500,6 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 											{ 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, { 0, 0, 0 }, PHONG },
 											{ 20, { 0, -80, 20 }, { 1.0, 0.0, 0.0 }, { 0, 0, 0 }, DIFF },
 											{ 30, { 0, -80, 120.0f }, { 0.0, 1.0, 0.0 }, { 2, 2, 2 }, DIFF } };
-
 		cudaMemcpyToSymbol(spheres, sphere_data, NUM_SPHERES * sizeof(Sphere));
 
 		float sun_angular = cos(sunSize * pi / 180.f);
@@ -538,12 +542,12 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 	shade<<<40, 128>>>(queue, queue2, shadow_queue, sceneData, blit_buffer, frame);
 	//connect<<<40, 128>>>(shadow_queue, sceneData, blit_buffer);
 
-
 	dim3 threads = dim3(16, 16, 1);
 	dim3 blocks = dim3(render_width / threads.x, render_height / threads.y, 1);
 	blit_onto_framebuffer<<<blocks, threads>>>(blit_buffer);
 
 	cuda(DeviceSynchronize());
+
 	frame++;
 	//hold_frame++;
 	last_pos = camera.position;
