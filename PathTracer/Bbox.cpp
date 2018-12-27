@@ -1,4 +1,4 @@
-#include "Bbox.h"
+#include "stdafx.h"
 
 __host__ BBox Union(const BBox& b1, const BBox& b2) {
 	BBox newBBox;

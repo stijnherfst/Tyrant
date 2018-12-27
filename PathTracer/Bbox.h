@@ -1,9 +1,5 @@
 #pragma once
 
-#include "Rays.h"
-#include <cuda_runtime.h>
-#include <stdint.h>
-
 struct BBox {
 	glm::vec3 bounds[2] = { { 1e10, 1e10, 1e10 }, { -1e10, -1e10, -1e10 } };
 
@@ -38,11 +34,11 @@ struct BBox {
 			return 2; // Z is largest
 	}
 
-	__device__ bool intersect(const Ray& r, glm::vec3 invDir, int rayDirNeg[3], float lowestIntersect) const {
-		float tMin = (bounds[rayDirNeg[0]].x - r.orig.x) * invDir.x;
-		float tMax = (bounds[1 - rayDirNeg[0]].x - r.orig.x) * invDir.x;
-		float tyMin = (bounds[rayDirNeg[1]].y - r.orig.y) * invDir.y;
-		float tyMax = (bounds[1 - rayDirNeg[1]].y - r.orig.y) * invDir.y;
+	__device__ bool intersect(const glm::vec3& origin, glm::vec3 invDir, int rayDirNeg[3], float lowestIntersect) const {
+		float tMin = (bounds[rayDirNeg[0]].x - origin.x) * invDir.x;
+		float tMax = (bounds[1 - rayDirNeg[0]].x - origin.x) * invDir.x;
+		float tyMin = (bounds[rayDirNeg[1]].y - origin.y) * invDir.y;
+		float tyMax = (bounds[1 - rayDirNeg[1]].y - origin.y) * invDir.y;
 
 		if (tMin > tyMax || tyMin > tMax)
 			return false;
@@ -51,8 +47,8 @@ struct BBox {
 		if (tyMax < tMax)
 			tMax = tyMax;
 
-		float tzMin = (bounds[rayDirNeg[2]].z - r.orig.z) * invDir.z;
-		float tzMax = (bounds[1 - rayDirNeg[2]].z - r.orig.z) * invDir.z;
+		float tzMin = (bounds[rayDirNeg[2]].z - origin.z) * invDir.z;
+		float tzMax = (bounds[1 - rayDirNeg[2]].z - origin.z) * invDir.z;
 
 		if (tMin > tzMax || tzMin > tMax)
 			return false;

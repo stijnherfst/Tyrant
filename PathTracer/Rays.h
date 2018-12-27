@@ -1,8 +1,7 @@
 #pragma once
 //Header file intended to keep all the different types of rays we want to have.
 //(i.e Differential rays? Secondary rays for certain objects?)
-#include <cuda_runtime.h>
-#include <glm.hpp>
+
 struct Ray {
 	glm::vec3 orig;
 	glm::vec3 dir;

@@ -42,12 +42,9 @@ Thus it is now less general, but simpler and faster to build.
 */
 #pragma once
 
-#include "BBox.h"
-#include "loader.h"
-#include <algorithm>
-#include <vector>
 
-enum class PartitionAlgorithm { EqualCounts,
+enum class PartitionAlgorithm { Middle,
+								EqualCounts,
 								SAH };
 
 class BVH {
@@ -119,13 +116,9 @@ public:
 	BVH::BVHNode* nodes = nullptr;
 	Triangle* primitives = nullptr;
 
-	__device__ bool intersect(const Ray& ray, float& closestIntersection, int& primitiveIndex) {
-		if (nodes == nullptr) {
-			return false;
-		}
-
+	__device__ bool intersect(RayQueue& ray) {
 		bool hit = false;
-		glm::vec3 invDir = 1.f / ray.dir;
+		glm::vec3 invDir = 1.f / ray.direction;
 		int dirIsNeg[3] = { invDir.x < 0, invDir.y < 0, invDir.z < 0 };
 		// Follow ray through BVH nodes to find primitive intersections
 		int toVisitOffset = 0, currentNodeIndex = 0;
@@ -133,14 +126,16 @@ public:
 		while (true) {
 			const auto* node = &nodes[currentNodeIndex];
 			// Check ray against BVH node
-			if (node->bbox.intersect(ray, invDir, dirIsNeg, closestIntersection)) {
+			if (node->bbox.intersect(ray.origin, invDir, dirIsNeg, ray.distance)) {
 				if (node->primitiveCount > 0) {
 					// LEAF, loop through all primitives in the node to get intersection
 					for (int i = 0; i < node->primitiveCount; ++i) {
-						float intersection = primitives[node->primitiveOffset + i].intersect(ray);
-						if (intersection > 0.00001f && intersection < closestIntersection && ((closestIntersection - intersection) > 0.00001f)) {
-							primitiveIndex = node->primitiveOffset + i;
-							closestIntersection = intersection;
+
+						float intersection = primitives[node->primitiveOffset + i].intersect(ray.origin, ray.direction);
+						if (intersection > epsilon && intersection < ray.distance && ((ray.distance - intersection) > epsilon)) {
+							ray.identifier = node->primitiveOffset + i;
+							ray.distance = intersection;
+
 							hit = true;
 						}
 					}
@@ -164,5 +159,50 @@ public:
 			}
 		}
 		return hit;
+	}
+
+	/// Intersects the ray with the BVH
+	/// Fpor shadow rays we only really care if it hits anything at all 
+	__device__ bool intersectSimple(ShadowQueue& ray) {
+		float closestIntersection = 1e20f;
+
+		glm::vec3 invDir = 1.f / ray.direction;
+		int dirIsNeg[3] = { invDir.x < 0, invDir.y < 0, invDir.z < 0 };
+		// Follow ray through BVH nodes to find primitive intersections
+		int toVisitOffset = 0, currentNodeIndex = 0;
+		int nodesToVisit[64];
+		while (true) {
+			const auto* node = &nodes[currentNodeIndex];
+			// Check ray against BVH node
+			if (node->bbox.intersect(ray.origin, invDir, dirIsNeg, closestIntersection)) {
+				if (node->primitiveCount > 0) {
+					// LEAF
+					for (int i = 0; i < node->primitiveCount; ++i) {
+						float intersection = primitives[node->primitiveOffset + i].intersect(ray.origin, ray.direction);
+						if (intersection > epsilon) {
+							return true;
+						}
+					}
+
+					if (toVisitOffset == 0)
+						break;
+					currentNodeIndex = nodesToVisit[--toVisitOffset];
+				} else {
+					// Choose which one to visit by looking at ray direction
+					if (dirIsNeg[node->splitAxis]) {
+						nodesToVisit[toVisitOffset++] = currentNodeIndex + 1;
+						currentNodeIndex = node->secondChildOffset;
+					} else {
+						nodesToVisit[toVisitOffset++] = node->secondChildOffset;
+						currentNodeIndex = currentNodeIndex + 1;
+					}
+				}
+			} else {
+				if (toVisitOffset == 0)
+					break;
+				currentNodeIndex = nodesToVisit[--toVisitOffset];
+			}
+		}
+		return false;
 	}
 };

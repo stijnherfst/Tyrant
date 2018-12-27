@@ -18,9 +18,21 @@ extern bool sun_position_changed;
 struct RayQueue {
 	glm::vec3 origin;
 	glm::vec3 direction;
+	glm::vec3 direct;
 	float distance;
+	int identifier;
+	int bounces;
 	int x;
 	int y;
+	int geometry_type = 1;
+	bool lastSpecular = true;
+};
+
+struct ShadowQueue {
+	glm::vec3 origin;
+	glm::vec3 direction;
+	float sunlight;
+	int buffer_index;
 };
 
 const unsigned int ray_queue_buffer_size = 1'048'576;

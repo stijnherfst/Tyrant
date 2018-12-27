@@ -1,8 +1,4 @@
 #pragma once
-#include "BVH.h"
-#include "Bbox.h"
-#include "static_mesh.h"
-#include <vector>
 
 class Scene {
 public:

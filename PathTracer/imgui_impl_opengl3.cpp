@@ -80,11 +80,8 @@ static int g_AttribLocationPosition = 0, g_AttribLocationUV = 0, g_AttribLocatio
 static unsigned int g_VboHandle = 0, g_ElementsHandle = 0;
 
 // Functions
-bool ImGui_ImplOpenGL3_Init(const char* glsl_version) {
-	// Store GLSL version string so we can refer to it later in case we recreate shaders. Note: GLSL version is NOT the same as GL version. Leave this to NULL if unsure.
-
-	if (glsl_version == NULL)
-		glsl_version = "#version 450 core";
+bool ImGui_ImplOpenGL3_Init() {
+	const char* glsl_version = "#version 450 core";
 
 	IM_ASSERT((int)strlen(glsl_version) + 2 < IM_ARRAYSIZE(g_GlslVersionString));
 	strcpy(g_GlslVersionString, glsl_version);

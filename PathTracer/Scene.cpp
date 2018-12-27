@@ -1,6 +1,5 @@
-#include "Scene.h"
-#include "BVH.h"
 #include "stdafx.h"
+
 void Scene::Load(const char path[]) {
 	const aiScene* importer_scene = importer.ReadFile(
 		path, aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices);

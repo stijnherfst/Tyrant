@@ -1,9 +1,4 @@
-#include "BVH.h"
-#include "loader.h"
-#include <algorithm>
-#include <assert.h>
-#include <iostream>
-#include <vector>
+#include "stdafx.h"
 
 BVH::BVH(std::vector<Triangle>& primitives, std::vector<BBox> primitivesBBoxes,
 		 PartitionAlgorithm partitionAlgo)

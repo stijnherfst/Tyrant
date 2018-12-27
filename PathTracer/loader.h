@@ -1,6 +1,5 @@
 #pragma once
-#include "Rays.h"
-#include "variables.h"
+
 struct Vertex {
 	glm::vec3 position;
 	glm::vec3 normal;
@@ -18,9 +17,9 @@ struct Triangle {
 	// HACK to align to 64 bytes since __align__ doesn't seem to work
 	// char placeholder_align[64 - 4 * sizeof(float3) - sizeof(uint8_t)];
 
-	__device__ float intersect(const Ray& r) {
+	__device__ float intersect(const glm::vec3& origin, const glm::vec3& direction) {
 		float u, v;
-		glm::vec3 pvec = glm::cross(r.dir, e2);
+		glm::vec3 pvec = glm::cross(direction, e2);
 		float det = glm::dot(e1, pvec);
 
 		// if the determinant is negative the triangle is backfacing
@@ -31,13 +30,13 @@ struct Triangle {
 		// if (fabs(det) < Epsilon) return 0;
 		float invDet = 1 / det;
 
-		glm::vec3 tvec = r.orig - vert;
+		glm::vec3 tvec = origin - vert;
 		u = glm::dot(tvec, pvec) * invDet;
 		if (u < 0 || u > 1)
 			return 0;
 
 		glm::vec3 qvec = glm::cross(tvec, e1);
-		v = glm::dot(r.dir, qvec) * invDet;
+		v = glm::dot(direction, qvec) * invDet;
 		if (v < 0 || u + v > 1)
 			return 0;
 		float t = dot(e2, qvec) * invDet;
