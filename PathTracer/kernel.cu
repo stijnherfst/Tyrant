@@ -120,6 +120,21 @@ __device__ inline bool intersect_scene_simple(ShadowQueue& ray, Scene::GPUScene 
 	return sceneData.CUDACachedBVH.intersectSimple(ray);
 }
 
+/*
+	Given a direction unit vector W, computes two other vectors U and V which 
+	make uvw an orthonormal basis.
+*/
+//TODO(Dan): Implement Frisvad method.
+__forceinline __device__ void computeOrthonormalBasisNaive(const glm::vec3& w, glm::vec3* u, glm::vec3* v) {
+	if (fabs(w.x) > .9) { /*If W is to close to X axis then pick Y*/
+		*u = glm::vec3{ 0.0f, 1.0f, 0.0f };
+	} else { /*Pick X axis*/
+		*u = glm::vec3{ 0.0f, 1.0f, 0.0f };
+	}
+	*u = normalize(cross(*u, w));
+	*v = cross(w, *u);
+}
+
 __device__ unsigned int shadow_ray_cnt = 0;
 __device__ unsigned int primary_ray_cnt = 0;
 __device__ unsigned int start_position = 0;
@@ -197,7 +212,6 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 
 		if (ray.distance < VERY_FAR) {
 			ray.origin += ray.direction * ray.distance;
-			ray.lastSpecular = false;
 
 			glm::vec3 normal;
 			if (ray.geometry_type == GeometryType::Sphere) {
@@ -215,8 +229,12 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 			bool outside = dot(normal, ray.direction) < 0;
 			normal = outside ? normal : normal * -1.f; // make n front facing is we are inside an object
 
+			//Prevent self-intersection
 			ray.origin += normal * epsilon;
 
+			//Initialize lastSpecular to false before each reflection_type.
+			//TODO(Dan): What happens if Phong exponent is huge? Then phong is specular as well...
+			ray.lastSpecular = false;
 			switch (reflection_type) {
 			case DIFF: {
 
@@ -241,8 +259,8 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 					float r2s = sqrt(r2);
 
 					// Transform to hemisphere coordinate system
-					const glm::vec3 u = glm::normalize(glm::cross((abs(normal.x) > .1f ? glm::vec3(0.f, 1.f, 0.f) : glm::vec3(1.f, 0.f, 0.f)), normal));
-					const glm::vec3 v = cross(normal, u);
+					glm::vec3 u, v;
+					computeOrthonormalBasisNaive(normal, &u, &v);
 					// Get sample on hemisphere
 					const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
 					ray.direction = d;
@@ -291,11 +309,8 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 				w = normalize(w);
 
 				// Transform to hemisphere coordinate system
-				const glm::vec3 u = glm::normalize(
-					glm::cross((abs(normal.x) > .9f ? glm::vec3(0.f, 1.f, 0.f)
-													: glm::vec3(1.f, 0.f, 0.f)),
-							   normal));
-				const glm::vec3 v = cross(w, u);
+				glm::vec3 u, v;
+				computeOrthonormalBasisNaive(w, &u, &v);
 				// Get sample on hemisphere
 				// compute cosine weighted random ray direction on hemisphere
 
