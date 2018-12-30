@@ -8,8 +8,9 @@
 
 #include "cuda_definitions.h"
 
-
 constexpr int NUM_SPHERES = 7;
+constexpr float VERY_FAR = 1e20f;
+constexpr int MAX_BOUNCES = 5;
 
 surface<void, cudaSurfaceType2D> surf;
 texture<float, cudaTextureTypeCubemap> skybox;
@@ -35,7 +36,7 @@ __device__ float RandomFloat2(unsigned int& seed) {
 enum Refl_t { DIFF,
 			  SPEC,
 			  REFR,
-			  PHONG};
+			  PHONG };
 
 inline __host__ __device__ float dot(const glm::vec4& v1, const glm::vec3& v2) {
 	return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
@@ -58,17 +59,6 @@ struct Sphere {
 		disc = sqrtf(disc);
 		return (t = b - disc) > epsilon ? t : ((t = b + disc) > epsilon ? t : 0);
 	}
-
-	//__device__ bool intersect_simple(const ShadowQueue& r) const {
-	//	glm::vec3 op = position - r.origin;
-	//	float t;
-	//	float b = glm::dot(op, r.direction);
-	//	float disc = b * b - dot(op, op) + radius * radius;
-	//	if (disc < 0)
-	//		return false;
-	//	disc = sqrtf(disc);
-	//	return (t = b - disc) > epsilon ? true : ((t = b + disc) > epsilon ? true : false);
-	//}
 
 	__device__ float intersect_simple(const ShadowQueue& r) const {
 		glm::vec3 op = position - r.origin;
@@ -102,21 +92,21 @@ __constant__ Sphere spheres[NUM_SPHERES];
 
 __device__ inline bool intersect_scene(RayQueue& ray, Scene::GPUScene sceneData) {
 	float d;
-	ray.distance = 1e20f;
+	ray.distance = VERY_FAR;
 
 	for (int i = NUM_SPHERES; i--;) {
 		//d = spheres[i].intersect(ray);
 		if ((d = spheres[i].intersect(ray)) && d < ray.distance) {
 			ray.distance = d;
 			ray.identifier = i;
-			ray.geometry_type = 0;
+			ray.geometry_type = GeometryType::Sphere;
 		}
 	}
 
 	if (sceneData.CUDACachedBVH.intersect(ray)) {
-		ray.geometry_type = 1;
+		ray.geometry_type = GeometryType::Triangle;
 	}
-	return ray.distance < 1e20f;
+	return ray.distance < VERY_FAR;
 }
 
 __device__ inline bool intersect_scene_simple(ShadowQueue& ray, Scene::GPUScene sceneData) {
@@ -130,98 +120,19 @@ __device__ inline bool intersect_scene_simple(ShadowQueue& ray, Scene::GPUScene 
 	return sceneData.CUDACachedBVH.intersectSimple(ray);
 }
 
-__device__ glm::vec3 radiance(Ray& ray, unsigned int& seed, Scene::GPUScene sceneData) {
-	//glm::vec3 color = { 1.f, 1.f, 1.f };
-	glm::vec3 direct = { 0.f, 0.f, 0.f };
-  
-	//int geometry_type = 0;
-	//int reflection_type;
-
-	//float distance;
-	//int id;
-	//for (int bounces = 0; bounces < 4; bounces++) {
-	//	if (!intersect_scene(ray, distance, id, geometry_type, sceneData)) {
-	//		return direct + color * (bounces > 0 ? sky(ray.dir) : sunsky(ray.dir));
-	//	}
-
-	//	glm::vec3 position = ray.orig + ray.dir * distance;
-	//	glm::vec3 normal;
-	//	switch (geometry_type) {
-	//	case 1:
-	//		const Sphere& object = spheres[id];
-	//		normal = (position - object.position) / object.radius;
-	//		color *= object.color;
-	//		reflection_type = object.refl;
-	//		break;
-	//	case 2:
-	//		//return {255, 0, 0};
-	//		Triangle* triangle = &(sceneData.CUDACachedBVH.primitives[id]);
-	//		normal = glm::cross(triangle->e1, triangle->e2);
-	//		normal = glm::normalize(normal);
-	//		// color *= glm::vec3(1, 1, 1);
-	//		reflection_type = DIFF;
-	//		break;
-	//	}
-
-	//	bool outside = dot(normal, ray.dir) < 0;
-	//	normal = outside
-	//				 ? normal
-	//				 : normal * -1.f; // make n front facing is we are inside an object
-	//	ray.orig = position + normal * epsilon;
-
-	//	switch (reflection_type) {
-	//	case DIFF: {
-	//		// Random direction in hemisphere
-	//		float r1 = 2.f * pi * RandomFloat(seed);
-	//		float r2 = RandomFloat(seed);
-	//		float r2s = sqrt(r2);
-
-	//		// Transform to hemisphere coordinate system
-	//		const glm::vec3 u = glm::normalize(glm::cross((abs(normal.x) > .1f ? glm::vec3(0.f, 1.f, 0.f)
-	//																		   : glm::vec3(1.f, 0.f, 0.f)),
-	//													  normal));
-	//		const glm::vec3 v = cross(normal, u);
-	//		// Get sample on hemisphere
-	//		const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
-
-	//		glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
-	//		float sunLight = dot(normal, sunSampleDir);
-
-	//		Ray shadow_ray = Ray(position + normal * 0.01f, sunSampleDir);
-	//		float shadow_ray_distance;
-	//		int shadow_ray_id;
-
-	//		if (sunLight > 0.0 && !intersect_scene(shadow_ray, shadow_ray_distance, shadow_ray_id, geometry_type, sceneData)) {
-	//			direct += color * sun(sunSampleDir) * sunLight * 1E-5f;
-	//		}
-
-	//		ray.dir = d;
-	//		break;
-	//	}
-	//	case SPEC: {
-	//		ray.dir = reflect(ray.dir, normal);
-	//		break;
-	//	}
-	//	case REFR: {
-	//		float n1 = outside ? 1.2f : 1.0f;
-	//		float n2 = outside ? 1.0f : 1.2f;
-
-	//		float r0 = (n1 - n2) / (n1 + n2);
-	//		r0 *= r0;
-	//		float fresnel = r0 + (1. - r0) * pow(1.0 - abs(dot(ray.dir, normal)), 5.);
-
-	//		if (RandomFloat(seed) < fresnel) {
-	//			ray.dir = glm::reflect(ray.dir, normal);
-	//		} else {
-	//			ray.orig = position - normal * 2.f * epsilon;
-	//			ray.dir = glm::refract(ray.dir, normal, n2 / n1);
-	//		}
-	//		break;
-	//	}
-	//	}
-	//}
-
-	return direct;
+/*
+	Given a direction unit vector W, computes two other vectors U and V which 
+	make uvw an orthonormal basis.
+*/
+//TODO(Dan): Implement Frisvad method.
+__forceinline __device__ void computeOrthonormalBasisNaive(const glm::vec3& w, glm::vec3* u, glm::vec3* v) {
+	if (fabs(w.x) > .9) { /*If W is to close to X axis then pick Y*/
+		*u = glm::vec3{ 0.0f, 1.0f, 0.0f };
+	} else { /*Pick X axis*/
+		*u = glm::vec3{ 0.0f, 1.0f, 0.0f };
+	}
+	*u = normalize(cross(*u, w));
+	*v = cross(w, *u);
 }
 
 __device__ unsigned int shadow_ray_cnt = 0;
@@ -231,7 +142,7 @@ __device__ unsigned int raynr_shade = 0;
 __device__ unsigned int raynr_primary = 0;
 __device__ unsigned int raynr_extend = 0;
 
-__global__ void zero_variables () {
+__global__ void zero_variables() {
 	shadow_ray_cnt = 0;
 	start_position += ray_queue_buffer_size - primary_ray_cnt;
 	start_position = start_position % (render_width * render_height);
@@ -239,17 +150,10 @@ __global__ void zero_variables () {
 	raynr_shade = 0;
 	raynr_primary = 0;
 	raynr_extend = 0;
-
 }
-
 
 /// Generate primary rays
 __global__ void primary_rays(RayQueue* queue, glm::vec3 camera_right, glm::vec3 camera_up, glm::vec3 camera_direction, glm::vec3 O) {
-	//if (blockIdx.x == 0 && threadIdx.x == 0) {
-	//	raynr_primary = 0;
-	//	start_position += ray_queue_buffer_size - primary_ray_cnt;
-	//	start_position = start_position % (render_width * render_height);
-	//}
 
 	while (true) {
 		unsigned int index = atomicAdd(&raynr_primary, 1);
@@ -273,19 +177,17 @@ __global__ void primary_rays(RayQueue* queue, glm::vec3 camera_right, glm::vec3 
 
 /// Advance the ray segments once
 __global__ void __launch_bounds__(128, 8) extend(RayQueue* queue, Scene::GPUScene sceneData) {
-	//if (blockIdx.x == 0 && threadIdx.x == 0) {
-	//	raynr_extend = 0;
-	//}
+
 	while (true) {
 		unsigned int index = atomicAdd(&raynr_extend, 1);
 
 		if (index > ray_queue_buffer_size - 1) {
 			return;
 		}
-	
+
 		RayQueue& ray = queue[index];
 
-		ray.distance = 1e20f;
+		ray.distance = VERY_FAR;
 		//sceneData.CUDACachedBVH.intersect(ray);
 		intersect_scene(ray, sceneData);
 	}
@@ -293,11 +195,6 @@ __global__ void __launch_bounds__(128, 8) extend(RayQueue* queue, Scene::GPUScen
 
 /// Process collisions and spawn extension and shadow rays
 __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue2, ShadowQueue* shadowQueue, Scene::GPUScene sceneData, glm::vec4* blit_buffer, unsigned int frame) {
-	//if (blockIdx.x == 0 && threadIdx.x == 0) {
-	//	raynr_shade = 0;
-	//	shadow_ray_cnt = 0;
-	//	primary_ray_cnt = 0;
-	//}
 
 	while (true) {
 		unsigned int index = atomicAdd(&raynr_shade, 1);
@@ -313,12 +210,11 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 		unsigned int seed = (frame * ray.x * 147565741) * 720898027 * index;
 		int reflection_type = DIFF;
 
-		if (ray.distance < 1e20f) {
-		  //ray.lastSpecular = true;
+		if (ray.distance < VERY_FAR) {
 			ray.origin += ray.direction * ray.distance;
 
 			glm::vec3 normal;
-			if (ray.geometry_type == 0) {
+			if (ray.geometry_type == GeometryType::Sphere) {
 				const Sphere& object = spheres[ray.identifier];
 				normal = (ray.origin - object.position) / object.radius;
 				reflection_type = object.refl;
@@ -333,121 +229,117 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 			bool outside = dot(normal, ray.direction) < 0;
 			normal = outside ? normal : normal * -1.f; // make n front facing is we are inside an object
 
+			//Prevent self-intersection
 			ray.origin += normal * epsilon;
 
+			//Initialize lastSpecular to false before each reflection_type.
+			//TODO(Dan): What happens if Phong exponent is huge? Then phong is specular as well...
+			ray.lastSpecular = false;
 			switch (reflection_type) {
-				case DIFF: {
-				ray.lastSpecular = false;
-			
-					// Generate new shadow ray
-					glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
-					float sunLight = dot(normal, sunSampleDir);
+			case DIFF: {
 
-					// < 0.f means sun is behind the surface
-					if (sunLight > 0.f) {
-						unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
-						//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
-						ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
+				// Generate new shadow ray
+				glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
+				float sunLight = dot(normal, sunSampleDir);
 
-						if (!intersect_scene_simple(rayy, sceneData)) {
-							color += ray.direct * (sun(rayy.direction) * rayy.sunlight * 1E-5f);
-						}
+				// < 0.f means sun is behind the surface
+				if (sunLight > 0.f) {
+					unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+					//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
+					ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
+
+					if (!intersect_scene_simple(rayy, sceneData)) {
+						color += ray.direct * (sun(rayy.direction) * rayy.sunlight * 1E-5f);
 					}
-
-					if (ray.bounces < 5) {
-						float r1 = 2.f * pi * RandomFloat(seed);
-						float r2 = RandomFloat(seed);
-						float r2s = sqrt(r2);
-
-						// Transform to hemisphere coordinate system
-						const glm::vec3 u = glm::normalize(glm::cross((abs(normal.x) > .1f ? glm::vec3(0.f, 1.f, 0.f) : glm::vec3(1.f, 0.f, 0.f)), normal));
-						const glm::vec3 v = cross(normal, u);
-						// Get sample on hemisphere
-						const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
-						ray.direction = d;
-					}
-
-					break;
 				}
-				case SPEC:
-					ray.direction = reflect(ray.direction, normal);
-					ray.lastSpecular = true;
-					break;
-				case REFR: {
-					ray.lastSpecular = false;
-				
-					float n1 = outside ? 1.2f : 1.0f;
-					float n2 = outside ? 1.0f : 1.2f;
 
-					float r0 = (n1 - n2) / (n1 + n2);
-					r0 *= r0;
-					float fresnel = r0 + (1. - r0) * pow(1.0 - abs(dot(ray.direction, normal)), 5.);
-
-					if (RandomFloat(seed) < fresnel) {
-						ray.direction = reflect(ray.direction, normal);
-					} else {
-						ray.origin = ray.origin - normal * 2.f * epsilon;
-						ray.direction = glm::refract(ray.direction, normal, n2 / n1);
-					}
-					break;
-				}
-				case PHONG: {
-					ray.lastSpecular = false;
-					// compute random perturbation of ideal reflection vector
-					// the higher the phong exponent, the closer the perturbed vector
-					// is to the ideal reflection direction
-					float phi = 2 * pi * RandomFloat(seed);
+				if (ray.bounces < MAX_BOUNCES) {
+					float r1 = 2.f * pi * RandomFloat(seed);
 					float r2 = RandomFloat(seed);
-					float phongexponent = 25;
-					float cosTheta = powf(1 - r2, 1.0f / (phongexponent + 1));
-					float sinTheta = sqrtf(1 - cosTheta * cosTheta);
+					float r2s = sqrt(r2);
 
-					/* 
+					// Transform to hemisphere coordinate system
+					glm::vec3 u, v;
+					computeOrthonormalBasisNaive(normal, &u, &v);
+					// Get sample on hemisphere
+					const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
+					ray.direction = d;
+				}
+
+				break;
+			}
+			case SPEC: {
+				ray.lastSpecular = true;
+				ray.direction = reflect(ray.direction, normal);
+				break;
+			}
+			case REFR: {
+
+				float n1 = outside ? 1.2f : 1.0f;
+				float n2 = outside ? 1.0f : 1.2f;
+
+				float r0 = (n1 - n2) / (n1 + n2);
+				r0 *= r0;
+				float fresnel = r0 + (1. - r0) * pow(1.0 - abs(dot(ray.direction, normal)), 5.);
+
+				if (RandomFloat(seed) < fresnel) {
+					ray.direction = reflect(ray.direction, normal);
+				} else {
+					ray.origin = ray.origin - normal * 2.f * epsilon;
+					ray.direction = glm::refract(ray.direction, normal, n2 / n1);
+				}
+				break;
+			}
+			case PHONG: {
+				// compute random perturbation of ideal reflection vector
+				// the higher the phong exponent, the closer the perturbed vector
+				// is to the ideal reflection direction
+				float phi = 2 * pi * RandomFloat(seed);
+				float r2 = RandomFloat(seed);
+				float phongexponent = 25;
+				float cosTheta = powf(1 - r2, 1.0f / (phongexponent + 1));
+				float sinTheta = sqrtf(1 - cosTheta * cosTheta);
+
+				/* 
 				Create orthonormal basis uvw around reflection vector with 
 				hitpoint as origin w is ray direction for ideal reflection
 			 */
-					glm::vec3 w;
-					w = ray.direction - normal * 2.0f * dot(normal, ray.direction);
-					w = normalize(w);
+				glm::vec3 w;
+				w = ray.direction - normal * 2.0f * dot(normal, ray.direction);
+				w = normalize(w);
 
-					// Transform to hemisphere coordinate system
-					const glm::vec3 u = glm::normalize(
-						glm::cross((abs(normal.x) > .9f ? glm::vec3(0.f, 1.f, 0.f)
-														: glm::vec3(1.f, 0.f, 0.f)),
-								   normal));
-					const glm::vec3 v = cross(w, u);
-					// Get sample on hemisphere
-					// compute cosine weighted random ray direction on hemisphere
+				// Transform to hemisphere coordinate system
+				glm::vec3 u, v;
+				computeOrthonormalBasisNaive(w, &u, &v);
+				// Get sample on hemisphere
+				// compute cosine weighted random ray direction on hemisphere
 
-					glm::vec3 d = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
-					d = normalize(d);
+				glm::vec3 d = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
+				d = normalize(d);
 
-					glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
-					float sunLight = dot(normal, sunSampleDir);
+				glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
+				float sunLight = dot(normal, sunSampleDir);
 
-					//SunLight is cos of sampleDir to normal. For phong we weight it proportional to cos(theta) ^ phongExponent
-					sunLight = powf(sunLight, phongexponent);
-					if (sunLight > 0.f) {
-						unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
-						//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
-						ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
+				//SunLight is cos of sampleDir to normal. For phong we weight it proportional to cos(theta) ^ phongExponent
+				sunLight = powf(sunLight, phongexponent);
+				if (sunLight > 0.f) {
+					unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+					//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
+					ShadowQueue rayy = { ray.origin, sunSampleDir, sunLight, ray.y * render_width + ray.x };
 
-						if (!intersect_scene_simple(rayy, sceneData)) {
-							color += ray.direct * (sun(rayy.direction) * rayy.sunlight * 1E-5f);
-						}
+					if (!intersect_scene_simple(rayy, sceneData)) {
+						color += ray.direct * (sun(rayy.direction) * rayy.sunlight * 1E-5f);
 					}
-
-					ray.origin = ray.origin + w * epsilon; // scene size dependent
-					ray.direction = d;
-					//TODO(Dan): Better to place all albedo stuff here?
-					//rayColorMask *= albedo;
-					break;
 				}
 
+				ray.origin = ray.origin + w * epsilon; // scene size dependent
+				ray.direction = d;
+
+				break;
+			}
 			}
 
-
-			if (ray.bounces < 5) {
+			if (ray.bounces < MAX_BOUNCES) {
 				ray.bounces++;
 
 				unsigned primary_index = atomicAdd(&primary_ray_cnt, 1);
@@ -459,7 +351,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 
 		} else {
 			// Don't generate new extended ray
-			color += (ray.lastSpecular == false) ? ray.direct * sky(ray.direction) : ray.direct *  sunsky(ray.direction);
+			color += (ray.lastSpecular == false) ? ray.direct * sky(ray.direction) : ray.direct * sunsky(ray.direction);
 			new_frame++;
 		}
 
@@ -503,11 +395,11 @@ __global__ void blit_onto_framebuffer(glm::vec4* blit_buffer) {
 	surf2Dwrite<glm::vec4>(glm::pow(cl / (cl + 1.f), glm::vec4(1.0f / 2.2f)), surf, x * sizeof(glm::vec4), y, cudaBoundaryModeZero);
 }
 
-bool first_time = true;
-bool reset_buffer = false;
-unsigned int frame = 0;
-
 cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene::GPUScene sceneData, RayQueue* queue, RayQueue* queue2, ShadowQueue* shadow_queue) {
+	static bool first_time = true;
+	static bool reset_buffer = false;
+	static unsigned int frame = 0;
+
 	if (first_time) {
 		first_time = false;
 

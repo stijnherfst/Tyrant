@@ -15,6 +15,10 @@ constexpr static float epsilon = 0.001f;
 extern glm::vec2 sun_position;
 extern bool sun_position_changed;
 
+enum class GeometryType {
+	Sphere = 0, Triangle = 1
+};
+
 struct RayQueue {
 	glm::vec3 origin;
 	glm::vec3 direction;
@@ -24,7 +28,7 @@ struct RayQueue {
 	int bounces;
 	int x;
 	int y;
-	int geometry_type = 1;
+	GeometryType geometry_type = GeometryType::Triangle;
 	bool lastSpecular = true;
 };
 
