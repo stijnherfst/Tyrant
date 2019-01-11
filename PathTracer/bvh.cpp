@@ -20,9 +20,26 @@ BVH::BVH(std::vector<Triangle>& primitives, std::vector<BBox> primitivesBBoxes,
 	orderedPrimitives.reserve(primitives.size());
 
 	recursiveBuild(0, primitives.size(), &nNodes, primitiveInfo,
-						  orderedPrimitives, primitives);
+				   orderedPrimitives, primitives);
 	primitives = orderedPrimitives;
+
+	//Output BVH statistics
 	std::cout << "Created BVH, total nodes : " << nNodes << "\n";
+	int dim[3] = {};
+	int interior_nodes = 0;
+	int leaf_nodes = 0;
+	int empty = 0;
+	for (int i = 0; i < nNodes; ++i) {
+		if (nodes[i].primitiveCount == 0) {
+			++interior_nodes;
+			dim[nodes[i].splitAxis]++;
+		} else { //LEAF
+			++leaf_nodes;
+		}
+	}
+	std::cout << "Interior Nodes : " << interior_nodes << "\n";
+	std::cout << "Leaf Nodes : " << leaf_nodes << "\n";
+	std::cout << "X-Dim : " << dim[0] << " Y-Dim : " << dim[1] << " Z-Dim : " << dim[2] << "\n";
 }
 
 int BVH::computeBucket(PrimitiveInfo primitive, glm::vec3 centroidBottom, glm::vec3 centroidTop, int dim) {
@@ -43,9 +60,9 @@ int BVH::computeBucket(PrimitiveInfo primitive, glm::vec3 centroidBottom, glm::v
 
 //Recursively build a BVH node
 void BVH::recursiveBuild(int start, int end, int* nNodes,
-								  std::vector<PrimitiveInfo>& primitiveInfo,
-								  std::vector<Triangle>& orderedPrimitives,
-								  const std::vector<Triangle>& primitives) {
+						 std::vector<PrimitiveInfo>& primitiveInfo,
+						 std::vector<Triangle>& orderedPrimitives,
+						 const std::vector<Triangle>& primitives) {
 	assert(start != end && "Start == END recursive build");
 
 	*nNodes = *nNodes + 1;
@@ -63,7 +80,7 @@ void BVH::recursiveBuild(int start, int end, int* nNodes,
 		int primitiveNumber = primitiveInfo[start].primitiveNumber;
 		orderedPrimitives.push_back(primitives[primitiveNumber]);
 		nodes[currentNode].initLeaf(firstPrimOffset, nPrimitives, nodeBBox);
-		return ;
+		return;
 	}
 
 	/* Not leaf, get centroid bounds*/
@@ -90,7 +107,7 @@ void BVH::recursiveBuild(int start, int end, int* nNodes,
 			orderedPrimitives.push_back(primitives[primNum]);
 		}
 		nodes[currentNode].initLeaf(firstPrimOffset, nPrimitives, nodeBBox);
-		return ;
+		return;
 	} else {
 		// Partition primitives based on _splitMethod_
 		switch (partitionAlgorithm) {
@@ -167,7 +184,7 @@ void BVH::recursiveBuild(int start, int end, int* nNodes,
 					orderedPrimitives.push_back(primitives[primNum]);
 				}
 				nodes[currentNode].initLeaf(firstPrimOffset, nPrimitives, nodeBBox);
-				return ;
+				return;
 			}
 			break;
 		}
@@ -179,19 +196,18 @@ void BVH::recursiveBuild(int start, int end, int* nNodes,
 		//Nodes stored in depth first order ( exactly how nNodes grows)
 		//First we build the left subtree, this will always be currentNode + 1
 		recursiveBuild(start, mid, nNodes, primitiveInfo,
-											orderedPrimitives, primitives);
+					   orderedPrimitives, primitives);
 		//After we're done nNodes has been changed and we want to know
 		//where to place the second child. That's the next free position,
 		//so  nNodes.
 		nodes[currentNode].secondChildOffset = *nNodes;
 		recursiveBuild(mid, end, nNodes, primitiveInfo,
-											 orderedPrimitives, primitives);
+					   orderedPrimitives, primitives);
 
-		//Initialize interior node 
+		//Initialize interior node
 		nodes[currentNode].initInterior(dim,
-						   nodes[currentNode + 1],
-						   nodes[nodes[currentNode].secondChildOffset]);
-
+										nodes[currentNode + 1],
+										nodes[nodes[currentNode].secondChildOffset]);
 	}
 	return;
 }
@@ -202,9 +218,9 @@ void BVH::BVHNode::initLeaf(int first, int n, const BBox& box) {
 	primitiveCount = n;
 }
 
-void BVH::BVHNode::initInterior(int axis,const BVHNode &leftNode,
-									   const BVHNode &rightNode) {
-	bbox = Union(leftNode.bbox,rightNode.bbox);
+void BVH::BVHNode::initInterior(int axis, const BVHNode& leftNode,
+								const BVHNode& rightNode) {
+	bbox = Union(leftNode.bbox, rightNode.bbox);
 	primitiveCount = 0;
 	splitAxis = axis;
 }

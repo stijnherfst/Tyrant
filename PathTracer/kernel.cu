@@ -8,6 +8,9 @@
 
 #include "cuda_definitions.h"
 
+//Define BVH_DEBUG to zero to output only what the BVH looks like
+#define BVH_DEBUG 0
+
 constexpr int NUM_SPHERES = 7;
 constexpr float VERY_FAR = 1e20f;
 constexpr int MAX_BOUNCES = 5;
@@ -109,6 +112,24 @@ __device__ inline bool intersect_scene(RayQueue& ray, Scene::GPUScene sceneData)
 	return ray.distance < VERY_FAR;
 }
 
+__device__ inline bool intersect_scene_DEBUG(RayQueue& ray, Scene::GPUScene sceneData, int* traversals) {
+	float d;
+	ray.distance = VERY_FAR;
+
+	//for (int i = NUM_SPHERES; i--;) {
+	//	//d = spheres[i].intersect(ray);
+	//	if ((d = spheres[i].intersect(ray)) && d < ray.distance) {
+	//		ray.distance = d;
+	//		ray.identifier = i;
+	//		ray.geometry_type = GeometryType::Sphere;
+	//	}
+	//}
+
+	if (sceneData.CUDACachedBVH.intersect_debug(ray, traversals)) {
+		ray.geometry_type = GeometryType::Triangle;
+	}
+	return ray.distance < VERY_FAR;
+}
 __device__ inline bool intersect_scene_simple(ShadowQueue& ray, Scene::GPUScene sceneData) {
 	for (int i = NUM_SPHERES; i--;) {
 		float d = spheres[i].intersect_simple(ray);
@@ -176,7 +197,25 @@ __global__ void primary_rays(RayQueue* queue, glm::vec3 camera_right, glm::vec3 
 }
 
 /// Advance the ray segments once
-__global__ void __launch_bounds__(128, 8) extend(RayQueue* queue, Scene::GPUScene sceneData) {
+__global__ void __launch_bounds__(128, 8) extend(RayQueue* queue,
+												 Scene::GPUScene sceneData) {
+
+	while (true) {
+		unsigned int index = atomicAdd(&raynr_extend, 1);
+
+		if (index > ray_queue_buffer_size - 1) {
+			return;
+		}
+		RayQueue& ray = queue[index];
+
+		ray.distance = VERY_FAR;
+		intersect_scene(ray, sceneData);
+	}
+}
+/// Execute "extend" step but compute ray color based on amount of BVH traversal steps and write to blit_buffer.
+__global__ void __launch_bounds__(128, 8) extend_debug_BVH(RayQueue* queue,
+														   Scene::GPUScene sceneData,
+														   glm::vec4* blit_buffer) {
 
 	while (true) {
 		unsigned int index = atomicAdd(&raynr_extend, 1);
@@ -188,8 +227,22 @@ __global__ void __launch_bounds__(128, 8) extend(RayQueue* queue, Scene::GPUScen
 		RayQueue& ray = queue[index];
 
 		ray.distance = VERY_FAR;
-		//sceneData.CUDACachedBVH.intersect(ray);
-		intersect_scene(ray, sceneData);
+		int traversals = 0;
+		intersect_scene_DEBUG(ray, sceneData, &traversals);
+
+		//Determine colors
+
+		const int rayIndex = ray.y * render_width + ray.x;
+		glm::vec3 color = {};
+		int green = (0.0002f * traversals) * 255.99f;
+		green = green > 255 ? 255 : green;
+		blit_buffer[rayIndex].g = green;
+		blit_buffer[rayIndex].a = 1;
+
+		if (traversals >= 70) { //Color very costly regions distinctly
+			int red = green;
+			blit_buffer[rayIndex].r = red;
+		}
 	}
 }
 
@@ -221,8 +274,8 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 				color = color + (ray.direct * object.emmission);
 				ray.direct *= object.color;
 			} else {
-				Triangle* triangle = &(sceneData.CUDACachedBVH.primitives[ray.identifier]);
-				normal = glm::normalize(glm::cross(triangle->e1, triangle->e2));
+				const Triangle& triangle = sceneData.CUDACachedBVH.primitives[ray.identifier];
+				normal = glm::normalize(glm::cross(triangle.e1, triangle.e2));
 				reflection_type = DIFF;
 			}
 
@@ -344,7 +397,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 
 				unsigned primary_index = atomicAdd(&primary_ray_cnt, 1);
 				queue2[primary_index] = ray;
-			} else {
+			} else { // MAX BOUNCES
 
 				new_frame++;
 			}
@@ -355,10 +408,11 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* queue, RayQueue* queue
 			new_frame++;
 		}
 
-		atomicAdd(&blit_buffer[ray.y * render_width + ray.x].r, color.r);
-		atomicAdd(&blit_buffer[ray.y * render_width + ray.x].g, color.g);
-		atomicAdd(&blit_buffer[ray.y * render_width + ray.x].b, color.b);
-		atomicAdd(&blit_buffer[ray.y * render_width + ray.x].a, new_frame);
+		const int rayIndex = ray.y * render_width + ray.x;
+		atomicAdd(&blit_buffer[rayIndex].r, color.r);
+		atomicAdd(&blit_buffer[rayIndex].g, color.g);
+		atomicAdd(&blit_buffer[rayIndex].b, color.b);
+		atomicAdd(&blit_buffer[rayIndex].a, new_frame);
 	}
 }
 
@@ -449,8 +503,12 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 
 	primary_rays<<<40, 128>>>(queue, camera_right, camera_up, camera.direction, camera.position);
 	zero_variables<<<1, 1>>>();
+#if BVH_DEBUG
+	extend_debug_BVH<<<40, 128>>>(queue, sceneData,blit_buffer);
+#else
 	extend<<<40, 128>>>(queue, sceneData);
 	shade<<<40, 128>>>(queue, queue2, shadow_queue, sceneData, blit_buffer, frame);
+#endif
 	//connect<<<40, 128>>>(shadow_queue, sceneData, blit_buffer);
 
 	dim3 threads = dim3(16, 16, 1);
