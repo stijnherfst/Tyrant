@@ -104,7 +104,7 @@ int main(int argc, char* argv[]) {
 	glfwSetKeyCallback(window, glfw_key_callback);
 
 	Scene scene;
-	scene.Load("Data/dragon.obj");
+	scene.Load("Data/dragon.ply");
 
 	#ifdef PERFORMANCE_TEST
 		std::ofstream test_file("performance.txt");
