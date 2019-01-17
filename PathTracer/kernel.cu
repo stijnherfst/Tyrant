@@ -11,42 +11,7 @@
 //Define BVH_DEBUG to zero to output only what the BVH looks like
 #define BVH_DEBUG 0
 
-#if BVH_DEBUG
 
-/// Execute "extend" step but compute ray color based on amount of BVH traversal steps and write to blit_buffer.
-__global__ void __launch_bounds__(128, 8) extend_debug_BVH(RayQueue* ray_buffer,
-														   Scene::GPUScene sceneData,
-														   glm::vec4* blit_buffer) {
-
-	while (true) {
-		unsigned int index = atomicAdd(&raynr_extend, 1);
-
-		if (index > ray_queue_buffer_size - 1) {
-			return;
-		}
-
-		RayQueue& ray = ray_bufer[index];
-
-		ray.distance = VERY_FAR;
-		int traversals = 0;
-		intersect_scene_DEBUG(ray, sceneData, &traversals);
-
-		//Determine colors
-
-		const int rayIndex = ray.y * render_width + ray.x;
-		glm::vec3 color = {};
-		int green = (0.0002f * traversals) * 255.99f;
-		green = green > 255 ? 255 : green;
-		blit_buffer[rayIndex].g = green;
-		blit_buffer[rayIndex].a = 1;
-
-		if (traversals >= 70) { //Color very costly regions distinctly
-			int red = green;
-			blit_buffer[rayIndex].r = red;
-		}
-	}
-}
-#endif
 
 constexpr int NUM_SPHERES = 7;
 constexpr float VERY_FAR = 1e20f;
@@ -241,10 +206,44 @@ __global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::
 	}
 }
 
-/// Advance the ray segments once
-__global__ void __launch_bounds__(128, 8) extend(RayQueue* ray_buffer,
-												 Scene::GPUScene sceneData) {
 
+//#if BVH_DEBUG
+
+/// Execute "extend" step but compute ray color based on amount of BVH traversal steps and write to blit_buffer.
+__global__ void __launch_bounds__(128, 8) extend_debug_BVH(RayQueue* ray_buffer, Scene::GPUScene sceneData, glm::vec4* blit_buffer) {
+	while (true) {
+		unsigned int index = atomicAdd(&raynr_extend, 1);
+
+		if (index > ray_queue_buffer_size - 1) {
+			return;
+		}
+
+		RayQueue& ray = ray_buffer[index];
+
+		ray.distance = VERY_FAR;
+		int traversals = 0;
+		intersect_scene_DEBUG(ray, sceneData, &traversals);
+
+		//Determine colors
+
+		const int rayIndex = ray.y * render_width + ray.x;
+		glm::vec3 color = {};
+		int green = (0.0002f * traversals) * 255.99f;
+		green = green > 255 ? 255 : green;
+		blit_buffer[rayIndex].g = green;
+		blit_buffer[rayIndex].a = 1;
+
+		if (traversals >= 70) { //Color very costly regions distinctly
+			int red = green;
+			blit_buffer[rayIndex].r = red;
+			blit_buffer[rayIndex].g = 0;
+		}
+	}
+}
+//#endif
+
+/// Advance the ray segments once
+__global__ void __launch_bounds__(128, 8) extend(RayQueue* ray_buffer, Scene::GPUScene sceneData) {
 	while (true) {
 		const unsigned int index = atomicAdd(&raynr_extend, 1);
 
