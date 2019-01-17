@@ -274,7 +274,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 		int new_frame = 0;
 		RayQueue& ray = ray_buffer[index];
 		glm::vec3 color = glm::vec3(0.f);
-
+		glm::vec3 object_color;
 		unsigned int seed = (frame * ray.x * 147565741) * 720898027 * index;
 		int reflection_type = DIFF;
 
@@ -287,11 +287,15 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				normal = (ray.origin - object.position) / object.radius;
 				reflection_type = object.refl;
 				color = ray.direct * object.emmission;
-				ray.direct *= object.color;
+				if (reflection_type != REFR) {
+					ray.direct *= object.color;
+				}
+				object_color = object.color;
 			} else {
 				const Triangle& triangle = sceneData.CUDACachedBVH.primitives[ray.identifier];
 				normal = glm::normalize(glm::cross(triangle.e1, triangle.e2));
 				reflection_type = DIFF;
+				object_color = glm::vec3(1.f);
 			}
 
 			bool outside = dot(normal, ray.direction) < 0;
@@ -351,6 +355,10 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 						ray.origin = ray.origin - normal * 2.f * epsilon;
 						ray.direction = glm::refract(ray.direction, normal, n2 / n1);
 					}
+
+					if (!outside) {
+						ray.direct *= exp(-object_color * ray.distance);
+					}
 					break;
 				}
 				case PHONG: {
@@ -359,7 +367,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 					// is to the ideal reflection direction
 					float phi = 2 * pi * RandomFloat(seed);
 					float r2 = RandomFloat(seed);
-					float phongexponent = 25;
+					float phongexponent = 50;
 					float cosTheta = powf(1 - r2, 1.0f / (phongexponent + 1));
 					float sinTheta = sqrtf(1 - cosTheta * cosTheta);
 
@@ -465,7 +473,7 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 		first_time = false;
 
 		Sphere sphere_data[NUM_SPHERES] = { { 16.5, { 0, 40, 16.5f }, { 1, 1, 1 }, { 0, 0, 0 }, DIFF },
-											{ 16.5, { 40, 0, 16.5f }, { 1, 1, 1 }, { 0, 0, 0 }, REFR },
+											{ 16.5, { 40, 0, 16.5f }, { 0.5, 0.5, 0.06 }, { 0, 0, 0 }, REFR },
 											{ 16.5, { -40, 0, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, PHONG },
 											{ 16.5, { -40, -50, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, SPEC },
 											{ 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, { 0, 0, 0 }, PHONG },
