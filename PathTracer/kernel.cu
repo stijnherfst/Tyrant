@@ -508,14 +508,14 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 		cuda(MemcpyToSymbol(primary_ray_cnt, &new_value, sizeof(int)));
 	}
 
-	primary_rays<<<sm_cores * 8, 128>>>(queue, camera_right, camera_up, camera.direction, camera.position);
+	primary_rays<<<sm_cores * 8, 128>>>(ray_buffer, camera_right, camera_up, camera.direction, camera.position);
 	zero_variables<<<1, 1>>>();
 #if BVH_DEBUG
 	extend_debug_BVH<<<40, 128>>>(ray_buffer, sceneData, blit_buffer);
 #else
-	extend<<<40, 128>>>(ray_buffer, sceneData);
-	shade<<<40, 128>>>(ray_buffer, ray_buffer_next, shadow_queue, sceneData, blit_buffer, frame);
-	connect<<<40, 128>>>(shadow_queue, sceneData, blit_buffer);
+	extend<<<sm_cores * 8, 128>>>(ray_buffer, sceneData);
+	shade<<<sm_cores * 8, 128>>>(ray_buffer, ray_buffer_next, shadow_queue, sceneData, blit_buffer, frame);
+	connect<<<sm_cores * 8, 128>>>(shadow_queue, sceneData, blit_buffer);
 #endif
 
 	dim3 threads = dim3(16, 16, 1);
