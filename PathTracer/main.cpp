@@ -104,7 +104,6 @@ int main(int argc, char* argv[]) {
 	glfwSetKeyCallback(window, glfw_key_callback);
 
 	Scene scene;
-	//scene.Load("Data/Untitled.fbx");
 	scene.Load("Data/dragon.ply");
 
 	#ifdef PERFORMANCE_TEST
@@ -112,11 +111,11 @@ int main(int argc, char* argv[]) {
 	#endif
 
 	// Allocate ray queue buffer
-	RayQueue* ray_queue_buffer;
-	cuda(Malloc(&ray_queue_buffer, ray_queue_buffer_size * sizeof(RayQueue)));
+	RayQueue* ray_buffer_work;
+	cuda(Malloc(&ray_buffer_work, ray_queue_buffer_size * sizeof(RayQueue)));
 
-	RayQueue* ray_queue_buffer2;
-	cuda(Malloc(&ray_queue_buffer2, ray_queue_buffer_size * sizeof(RayQueue)));
+	RayQueue* ray_buffer_next;
+	cuda(Malloc(&ray_buffer_next, ray_queue_buffer_size * sizeof(RayQueue)));
 
 	ShadowQueue* shadow_queue_buffer;
 	cuda(Malloc(&shadow_queue_buffer, ray_queue_buffer_size * sizeof(ShadowQueue)));
@@ -155,8 +154,8 @@ int main(int argc, char* argv[]) {
 #endif
 		camera.update();
 
-		launch_kernels(interop.ca, blit_buffer, scene.gpuScene, ray_queue_buffer, ray_queue_buffer2, shadow_queue_buffer);
-		std::swap(ray_queue_buffer, ray_queue_buffer2);
+		launch_kernels(interop.ca, blit_buffer, scene.gpuScene, ray_buffer_work, ray_buffer_next, shadow_queue_buffer);
+		std::swap(ray_buffer_work, ray_buffer_next);
 		interop.blit();
 
 		// IMGUI
