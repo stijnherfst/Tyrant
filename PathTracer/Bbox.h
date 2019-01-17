@@ -1,6 +1,7 @@
 #pragma once
 
 struct BBox {
+	//bounds[0] = bottom, bounds[1] = top
 	glm::vec3 bounds[2] = { { 1e10, 1e10, 1e10 }, { -1e10, -1e10, -1e10 } };
 
 	/*Add a vertex to the encompassing bounding box, enlarging it as needed*/

@@ -17,6 +17,7 @@ struct Triangle {
 	// HACK to align to 64 bytes since __align__ doesn't seem to work
 	// char placeholder_align[64 - 4 * sizeof(float3) - sizeof(uint8_t)];
 
+	//Muller-Trumbore intersection
 	__device__ float intersect(const glm::vec3& origin, const glm::vec3& direction) {
 		float u, v;
 		glm::vec3 pvec = glm::cross(direction, e2);
