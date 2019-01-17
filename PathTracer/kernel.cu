@@ -555,10 +555,10 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 		cuda(MemcpyToSymbol(primary_ray_cnt, &new_value, sizeof(int)));
 	}
 
-	primary_rays<<<40, 128>>>(queue, camera_right, camera_up, camera.direction, camera.position);
+	primary_rays<<<sm_cores * 8, 128>>>(queue, camera_right, camera_up, camera.direction, camera.position);
 	zero_variables<<<1, 1>>>();
-	extend<<<40, 128>>>(queue, sceneData);
-	shade<<<40, 128>>>(queue, queue2, shadow_queue, sceneData, blit_buffer, frame);
+	extend<<<sm_cores * 8, 128>>>(queue, sceneData);
+	shade<<<sm_cores * 8, 128>>>(queue, queue2, shadow_queue, sceneData, blit_buffer, frame);
 	//connect<<<40, 128>>>(shadow_queue, sceneData, blit_buffer);
 
 	dim3 threads = dim3(16, 16, 1);

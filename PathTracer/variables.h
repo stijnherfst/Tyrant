@@ -14,6 +14,7 @@ constexpr static float epsilon = 0.001f;
 
 extern glm::vec2 sun_position;
 extern bool sun_position_changed;
+extern int sm_cores;
 
 struct RayQueue {
 	glm::vec3 origin;

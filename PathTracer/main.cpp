@@ -93,6 +93,7 @@ int main(int argc, char* argv[]) {
 
 	cuda_err = cuda(GetDeviceProperties(&props, cuda_device_id));
 	printf("CUDA : %-24s (%2d)\n", props.name, props.multiProcessorCount);
+	sm_cores = props.multiProcessorCount;
 
 
 	cuda_interop interop;
