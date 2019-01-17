@@ -35,7 +35,7 @@ struct RayQueue {
 struct ShadowQueue {
 	glm::vec3 origin;
 	glm::vec3 direction;
-	float sunlight;
+	glm::vec3 color;
 	int buffer_index;
 };
 

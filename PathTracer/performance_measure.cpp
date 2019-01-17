@@ -28,7 +28,7 @@ bool PerformanceMeasure::measure(double delta) {
 		file << "Average ms: " << average_delta * 1000.0 << "\n";
 		file << "Average fps: " << 1.0 / average_delta << "\n";
 		file << "Min ms: " << delta_min << "\n";
-		file << "Max ms: " << delta_max << "\n\n";
+		file << "Max ms: " << delta_max << "\n";
 
 		delta_min = std::numeric_limits<double>::max();
 		delta_max = 0;
@@ -36,6 +36,7 @@ bool PerformanceMeasure::measure(double delta) {
 		times.clear();
 		if (current_test < test_positions.size() - 1) {
 			current_test++;
+			file << "\n";
 		} else {
 			return true;
 		}
