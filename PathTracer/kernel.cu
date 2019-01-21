@@ -11,8 +11,6 @@
 //Define BVH_DEBUG to zero to output only what the BVH looks like
 #define BVH_DEBUG 0
 
-
-
 constexpr int NUM_SPHERES = 7;
 constexpr float VERY_FAR = 1e20f;
 constexpr int MAX_BOUNCES = 5;
@@ -171,8 +169,15 @@ __device__ unsigned int raynr_shade = 0;
 __device__ unsigned int raynr_connect = 0;
 
 //Kernel should be called after primary ray generation but before extend and shade steps
-__global__ void zero_variables() {
-	start_position += ray_queue_buffer_size - primary_ray_cnt;
+__global__ void set_wavefront_globals() {
+
+	//Get how many rays we created last generation step.
+	const unsigned int progress_last_frame = ray_queue_buffer_size - primary_ray_cnt;
+
+	//The starting position for the next step is where we left off last time.
+	//Last step we progressed from the start_position by progress_last_frame rays.
+	//Next step we start from prev starting position incremented by how much we progressed this frame
+	start_position += progress_last_frame;
 	start_position = start_position % (render_width * render_height);
 	//Zero out counters atomically incremented for all wavefront kernels.
 	shadow_ray_cnt = 0;
@@ -208,7 +213,6 @@ __global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::
 		ray_buffer[ray_index_buffer] = { O, direction, { 1, 1, 1 }, 0, 0, 0, x, y };
 	}
 }
-
 
 //#if BVH_DEBUG
 
@@ -308,101 +312,101 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 			//TODO(Dan): What happens if Phong exponent is huge? Then phong is specular as well...
 			ray.lastSpecular = false;
 			switch (reflection_type) {
-				case DIFF: {
+			case DIFF: {
 
-					// Generate new shadow ray
-					glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
-					float sunLight = dot(normal, sunSampleDir);
+				// Generate new shadow ray
+				glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
+				float sunLight = dot(normal, sunSampleDir);
 
-					// < 0.f means sun is behind the surface
-					if (sunLight > 0.f) {
-						unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
-						shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.y * render_width + ray.x };
-					}
-
-					if (ray.bounces < MAX_BOUNCES) {
-						float r1 = 2.f * pi * RandomFloat(seed);
-						float r2 = RandomFloat(seed);
-						float r2s = sqrt(r2);
-
-						// Transform to hemisphere coordinate system
-						glm::vec3 u, v;
-						computeOrthonormalBasisNaive(normal, &u, &v);
-						// Get sample on hemisphere
-						const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
-						ray.direction = d;
-					}
-
-					break;
+				// < 0.f means sun is behind the surface
+				if (sunLight > 0.f) {
+					unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+					shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.y * render_width + ray.x };
 				}
-				case SPEC: {
-					ray.lastSpecular = true;
-					ray.direction = reflect(ray.direction, normal);
-					break;
-				}
-				case REFR: {
 
-					float n1 = outside ? 1.2f : 1.0f;
-					float n2 = outside ? 1.0f : 1.2f;
-
-					float r0 = (n1 - n2) / (n1 + n2);
-					r0 *= r0;
-					float fresnel = r0 + (1. - r0) * pow(1.0 - abs(dot(ray.direction, normal)), 5.);
-
-					if (RandomFloat(seed) < fresnel) {
-						ray.direction = reflect(ray.direction, normal);
-					} else {
-						ray.origin = ray.origin - normal * 2.f * epsilon;
-						ray.direction = glm::refract(ray.direction, normal, n2 / n1);
-					}
-
-					if (!outside) {
-						ray.direct *= exp(-object_color * ray.distance);
-					}
-					break;
-				}
-				case PHONG: {
-					// compute random perturbation of ideal reflection vector
-					// the higher the phong exponent, the closer the perturbed vector
-					// is to the ideal reflection direction
-					float phi = 2 * pi * RandomFloat(seed);
+				if (ray.bounces < MAX_BOUNCES) {
+					float r1 = 2.f * pi * RandomFloat(seed);
 					float r2 = RandomFloat(seed);
-					float phongexponent = 50;
-					float cosTheta = powf(1 - r2, 1.0f / (phongexponent + 1));
-					float sinTheta = sqrtf(1 - cosTheta * cosTheta);
-
-					/* 
-					Create orthonormal basis uvw around reflection vector with 
-					hitpoint as origin w is ray direction for ideal reflection
-				 */
-					glm::vec3 w;
-					w = ray.direction - normal * 2.0f * dot(normal, ray.direction);
-					w = normalize(w);
+					float r2s = sqrt(r2);
 
 					// Transform to hemisphere coordinate system
 					glm::vec3 u, v;
-					computeOrthonormalBasisNaive(w, &u, &v);
+					computeOrthonormalBasisNaive(normal, &u, &v);
 					// Get sample on hemisphere
-					// compute cosine weighted random ray direction on hemisphere
-
-					glm::vec3 d = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
-					d = normalize(d);
-
-					glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
-					float sunLight = dot(normal, sunSampleDir);
-
-					//SunLight is cos of sampleDir to normal. For phong we weight it proportional to cos(theta) ^ phongExponent
-					sunLight = powf(sunLight, phongexponent);
-					if (sunLight > 0.f) {
-						unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
-						shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.y * render_width + ray.x };
-					}
-
-					ray.origin = ray.origin + w * epsilon; // scene size dependent
+					const glm::vec3 d = glm::normalize(u * cos(r1) * r2s + v * sin(r1) * r2s + normal * sqrt(1 - r2));
 					ray.direction = d;
-
-					break;
 				}
+
+				break;
+			}
+			case SPEC: {
+				ray.lastSpecular = true;
+				ray.direction = reflect(ray.direction, normal);
+				break;
+			}
+			case REFR: {
+
+				float n1 = outside ? 1.2f : 1.0f;
+				float n2 = outside ? 1.0f : 1.2f;
+
+				float r0 = (n1 - n2) / (n1 + n2);
+				r0 *= r0;
+				float fresnel = r0 + (1. - r0) * pow(1.0 - abs(dot(ray.direction, normal)), 5.);
+
+				if (RandomFloat(seed) < fresnel) {
+					ray.direction = reflect(ray.direction, normal);
+				} else {
+					ray.origin = ray.origin - normal * 2.f * epsilon;
+					ray.direction = glm::refract(ray.direction, normal, n2 / n1);
+				}
+
+				if (!outside) {
+					ray.direct *= exp(-object_color * ray.distance);
+				}
+				break;
+			}
+			case PHONG: {
+				// compute random perturbation of ideal reflection vector
+				// the higher the phong exponent, the closer the perturbed vector
+				// is to the ideal reflection direction
+				float phi = 2 * pi * RandomFloat(seed);
+				float r2 = RandomFloat(seed);
+				float phongexponent = 50;
+				float cosTheta = powf(1 - r2, 1.0f / (phongexponent + 1));
+				float sinTheta = sqrtf(1 - cosTheta * cosTheta);
+
+				/* 
+					Create orthonormal basis uvw around reflection vector with 
+					hitpoint as origin w is ray direction for ideal reflection
+				 */
+				glm::vec3 w;
+				w = ray.direction - normal * 2.0f * dot(normal, ray.direction);
+				w = normalize(w);
+
+				// Transform to hemisphere coordinate system
+				glm::vec3 u, v;
+				computeOrthonormalBasisNaive(w, &u, &v);
+				// Get sample on hemisphere
+				// compute cosine weighted random ray direction on hemisphere
+
+				glm::vec3 d = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
+				d = normalize(d);
+
+				glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
+				float sunLight = dot(normal, sunSampleDir);
+
+				//SunLight is cos of sampleDir to normal. For phong we weight it proportional to cos(theta) ^ phongExponent
+				sunLight = powf(sunLight, phongexponent);
+				if (sunLight > 0.f) {
+					unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+					shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.y * render_width + ray.x };
+				}
+
+				ray.origin = ray.origin + w * epsilon; // scene size dependent
+				ray.direction = d;
+
+				break;
+			}
 			}
 
 			if (ray.bounces < MAX_BOUNCES) {
@@ -517,7 +521,7 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 	}
 
 	primary_rays<<<sm_cores * 8, 128>>>(ray_buffer, camera_right, camera_up, camera.direction, camera.position);
-	zero_variables<<<1, 1>>>();
+	set_wavefront_globals<<<1, 1>>>();
 #if BVH_DEBUG
 	extend_debug_BVH<<<40, 128>>>(ray_buffer, sceneData, blit_buffer);
 #else
