@@ -179,8 +179,9 @@ int main(int argc, char* argv[]) {
 			ImGui::Text("X: %f, Y: %f, Z: %f", camera.position.x, camera.position.y, camera.position.z);
 			ImGui::Text("Hor: %f, Vert: %f", camera.horizontal_angle, camera.vertical_angle);
 			ImGui::SliderFloat("FocalDistance", &camera.focalDistance, 0.1, 100);
-			ImGui::SliderFloat("LensRadius", &camera.lensRadius, 0.01, 100);
-			ImGui::InputFloat("LensRadius", &camera.lensRadius);
+			ImGui::SliderFloat("LensRadius", &camera.lensRadius, 0.01, 80,"%.3f",1.3);
+			//TODO(Dan): Backspace doesn't trigger. Manually need to call ImGui backend?
+			ImGui::InputFloat("Lens Rad", &camera.lensRadius);
 
 			ImGui::End();
 		}

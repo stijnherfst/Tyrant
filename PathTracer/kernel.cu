@@ -155,23 +155,24 @@ __forceinline __device__ void computeOrthonormalBasisNaive(const glm::vec3& w, g
 	*u = normalize(cross(*u, w));
 	*v = cross(w, *u);
 }
-__device__ glm::vec2 ConcentricSampleDisk(const glm::vec2 &u) {
-	  //Map from [0,1] to [-1,1]
-    glm::vec2 uOffset = 2.f * u - glm::vec2(1, 1);
+__device__ glm::vec2 ConcentricSampleDisk(const glm::vec2& u) {
+	//Map from [0,1] to [-1,1]
+	glm::vec2 uOffset = 2.f * u - glm::vec2(1, 1);
 
-    // Handle degeneracy at the origin
-    if (uOffset.x == 0 && uOffset.y == 0) return glm::vec2(0, 0);
+	// Handle degeneracy at the origin
+	if (uOffset.x == 0 && uOffset.y == 0)
+		return glm::vec2(0, 0);
 
-    // Apply concentric mapping to point
-    float theta, r;
-    if (std::abs(uOffset.x) > std::abs(uOffset.y)) {
-        r = uOffset.x;
-        theta = pi / 4 * (uOffset.y / uOffset.x);
-    } else {
-        r = uOffset.y;
-        theta = pi /2 - pi / 4 * (uOffset.x / uOffset.y);
-    }
-    return r * glm::vec2(std::cos(theta), std::sin(theta));
+	// Apply concentric mapping to point
+	float theta, r;
+	if (std::abs(uOffset.x) > std::abs(uOffset.y)) {
+		r = uOffset.x;
+		theta = pi / 4 * (uOffset.y / uOffset.x);
+	} else {
+		r = uOffset.y;
+		theta = pi / 2 - pi / 4 * (uOffset.x / uOffset.y);
+	}
+	return r * glm::vec2(std::cos(theta), std::sin(theta));
 }
 
 //Number of rays still active after the shade kernel.
@@ -211,7 +212,7 @@ __global__ void set_wavefront_globals() {
 }
 
 /// Generate primary rays. Fill ray_buffer up till max length.
-__global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::vec3 camera_up, glm::vec3 camera_direction, glm::vec3 O, unsigned int frame,float focalDistance, float lens_radius) {
+__global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::vec3 camera_up, glm::vec3 camera_direction, glm::vec3 O, unsigned int frame, float focalDistance, float lens_radius) {
 
 	//Fill ray buffer up to ray_queue_buffer_size.
 	while (true) {
@@ -221,6 +222,8 @@ __global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::
 		if (ray_index_buffer > ray_queue_buffer_size - 1) {
 			return;
 		}
+		//Initialize random seed
+		unsigned int seed = (frame * 147565741) * 720898027 * index;
 
 		//Compute (x,y) coords based on position in buffer.
 		// X goes (left -> right); Y goes (top -> bottom)
@@ -228,29 +231,26 @@ __global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::
 		const int x = (start_position + index) % render_width;
 		const int y = ((start_position + index) / render_width) % render_height;
 
-		//Compute random point inside of the pixel ( Antialiasing, better noise etc)
-		//TODO(Dan): Blue noise ?
-		unsigned int seed = (frame * 147565741) * 720898027 * index;
-
 		const float rand_point_pixelX = x - RandomFloat(seed);
-		const float rand_point_pixelY = y - RandomFloat(seed); 
+		const float rand_point_pixelY = y - RandomFloat(seed);
 
 		const float normalized_i = (rand_point_pixelX / (float)render_width) - 0.5f;
 		const float normalized_j = ((render_height - rand_point_pixelY) / (float)render_height) - 0.5f;
 
 		//Normal direction which we would compute even without DoF
 		glm::vec3 directionToFocalPlane = camera_direction + normalized_i * camera_right + normalized_j * camera_up;
-		directionToFocalPlane = glm::normalize(directionToFocalPlane); 
+		directionToFocalPlane = glm::normalize(directionToFocalPlane);
 
 		//Get the convergence point which is at focalDistance
-		glm::vec3 convergencePoint = O + focalDistance * 3 * directionToFocalPlane;
- 
+		//TODO(Dan): I currently multiply by 3 because I felt it would be easier for the ImGui slider.
+		// Fix this by modifying how slider works?
+		const int ImGui_slider_hack = 3.0f;
+		glm::vec3 convergencePoint = O + focalDistance * ImGui_slider_hack * directionToFocalPlane;
 
 		glm::vec2 lens_sample(RandomFloat(seed), RandomFloat(seed));
 		glm::vec2 pLens = lens_radius * ConcentricSampleDisk(lens_sample);
 		glm::vec3 newOrigin = O + camera_right * pLens.x + camera_up * pLens.y;
 
-		//O = O + camera_right * pLens.x + camera_up * pLens.y;
 		glm::vec3 direction = glm::normalize(convergencePoint - newOrigin);
 
 		ray_buffer[ray_index_buffer] = { newOrigin, direction, { 1, 1, 1 }, 0, 0, 0, x, y };
@@ -564,7 +564,7 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 		int new_value = 0;
 		cuda(MemcpyToSymbol(primary_ray_cnt, &new_value, sizeof(int)));
 	}
-	primary_rays<<<sm_cores * 8, 128>>>(ray_buffer, camera_right, camera_up, camera.direction, camera.position, frame,camera.focalDistance,camera.lensRadius);
+	primary_rays<<<sm_cores * 8, 128>>>(ray_buffer, camera_right, camera_up, camera.direction, camera.position, frame, camera.focalDistance, camera.lensRadius);
 	set_wavefront_globals<<<1, 1>>>();
 #if BVH_DEBUG
 	extend_debug_BVH<<<40, 128>>>(ray_buffer, sceneData, blit_buffer);
