@@ -47,7 +47,6 @@ int BVH::computeBucket(PrimitiveInfo primitive, glm::vec3 centroidBottom, glm::v
 	float distance = primitive.centroid[dim] - centroidBottom[dim];
 	//Normalize the distance
 	if (centroidTop[dim] > centroidBottom[dim]) {
-		//TODO(Dan): Is this 'if' needed?
 		//Normalize to [0,1]
 		distance = distance / (centroidTop[dim] - centroidBottom[dim]);
 	}

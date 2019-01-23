@@ -5,6 +5,10 @@ struct Camera {
 	glm::vec3 direction = { 1, 0, 0 };
 	glm::vec3 up = { 0, 0, 1 };
 
+	float focalDistance = 1;
+	float lensRadius = 0.0f;
+	bool enableDoF = false;
+
 	double fov = 70;
 	double aspect_ratio = render_width / render_height;
 	double fov_rad = (pi / 180.0) * static_cast<double>(fov); // Need radians
