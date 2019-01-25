@@ -24,7 +24,6 @@ void Camera::handle_input(GLFWwindow* window, double delta) {
 	} else if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL)) {
 		position.z -= 1 * speed * float(delta);
 	}
-
 	if (glfwGetKey(window, GLFW_KEY_LEFT_ALT)) {
 		return;
 	}
