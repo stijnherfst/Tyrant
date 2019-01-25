@@ -43,10 +43,10 @@ __device__ int RandomIntBetween0AndMax(unsigned int& seed, int max) {
 //Generate stratified sample of 2D [0,1]^2
 __device__ glm::vec2 Random2DStratifiedSample(unsigned int& seed) {
 	//Set the size of the pixel in stratums.
-	constexpr int width2D = 2;
-	constexpr int height2D = 2;
-	constexpr float pixelWidth = 1 / width2D;
-	constexpr float pixelHeight = 1 / height2D;
+	constexpr int width2D = 4;
+	constexpr int height2D = 4;
+	constexpr float pixelWidth = 1.0f / width2D;
+	constexpr float pixelHeight = 1.0f / height2D;
 
 	const int chosenStratum = RandomIntBetween0AndMax(seed, width2D * height2D);
 	//Compute stratum X in [0, width-1] and Y in [0,height -1]
@@ -259,12 +259,15 @@ __global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::
 		const int x = (start_position + index) % render_width;
 		const int y = ((start_position + index) / render_width) % render_height;
 
-		//glm::vec2 sample2D = Random2DStratifiedSample(seed);
-		//const float rand_point_pixelX = x - sample2D.x;
-		//const float rand_point_pixelY = y - sample2D.y;
+		//Get random stratified points inside pixel;
+		glm::vec2 sample2D = Random2DStratifiedSample(seed);
+		const float rand_point_pixelX = x - sample2D.x;
+		const float rand_point_pixelY = y - sample2D.y;
 
+#if 0 //Ordinary random points
 		const float rand_point_pixelX = x - RandomFloat(seed);
 		const float rand_point_pixelY = y - RandomFloat(seed);
+#endif
 
 		const float normalized_i = (rand_point_pixelX / (float)render_width) - 0.5f;
 		const float normalized_j = ((render_height - rand_point_pixelY) / (float)render_height) - 0.5f;
