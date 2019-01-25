@@ -36,6 +36,34 @@ __device__ float RandomFloat2(unsigned int& seed) {
 	return (RandomInt(seed) >> 16) / 65535.0f;
 }
 
+__device__ int RandomIntBetween0AndMax(unsigned int& seed, int max) {
+	return int(RandomFloat(seed) * (max + 0.99999f));
+}
+
+//Generate stratified sample of 2D [0,1]^2
+__device__ glm::vec2 Random2DStratifiedSample(unsigned int& seed) {
+	//Set the size of the pixel in stratums.
+	constexpr int width2D = 2;
+	constexpr int height2D = 2;
+	constexpr float pixelWidth = 1 / width2D;
+	constexpr float pixelHeight = 1 / height2D;
+
+	const int chosenStratum = RandomIntBetween0AndMax(seed, width2D * height2D);
+	//Compute stratum X in [0, width-1] and Y in [0,height -1]
+	const int stratumX = chosenStratum % width2D;
+	const int stratumY = (chosenStratum / width2D) % height2D;
+
+	//Now we split up the pixel into [stratumX,stratumY] pieces.
+	//Let's get the width and height of this sample
+
+	const float stratumXStart = pixelWidth * stratumX;
+	const float stratumYStart = pixelHeight * stratumY;
+
+	const float randomPointInStratumX = stratumXStart + (RandomFloat(seed) * pixelWidth);
+	const float randomPointInStratumY = stratumYStart + (RandomFloat(seed) * pixelHeight);
+	return glm::vec2(randomPointInStratumX, randomPointInStratumY);
+}
+
 enum Refl_t { DIFF,
 			  SPEC,
 			  REFR,
@@ -231,6 +259,10 @@ __global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::
 		const int x = (start_position + index) % render_width;
 		const int y = ((start_position + index) / render_width) % render_height;
 
+		//glm::vec2 sample2D = Random2DStratifiedSample(seed);
+		//const float rand_point_pixelX = x - sample2D.x;
+		//const float rand_point_pixelY = y - sample2D.y;
+
 		const float rand_point_pixelX = x - RandomFloat(seed);
 		const float rand_point_pixelY = y - RandomFloat(seed);
 
@@ -388,19 +420,36 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				break;
 			}
 			case REFR: {
-
-				float n1 = outside ? 1.2f : 1.0f;
-				float n2 = outside ? 1.0f : 1.2f;
-
+				//Based on : https://graphics.stanford.edu/courses/cs148-10-summer/docs/2006--degreve--reflection_refraction.pdf
+				//Modified Schlick2 in paper to be normal Schlick, i.e
+				//Does not handle case where n2 < n1 ( If you're in water looking at outside)
+				//Compute IoR's  and swap if outside/inside.
+				//TODO(Dan): I'm sure we defy convention by doing n2/n1 though. Check other sources?
+				const float n1 = outside ? 1.2f : 1.0f;
+				const float n2 = outside ? 1.0f : 1.2f;
+				//Compute fresnel via Schlick's approximation
+				float fresnel = 0;
 				float r0 = (n1 - n2) / (n1 + n2);
 				r0 *= r0;
-				float fresnel = r0 + (1. - r0) * pow(1.0 - abs(dot(ray.direction, normal)), 5.);
+				const float cosI = -glm::dot(normal, ray.direction);
+				const float n = n2 / n1;
+				const float sinT2 = n * n * (1.0f - cosI * cosI);
+				//Check for Total Internal Reflection
+				if (sinT2 > 1.0f) {
+					fresnel = 1.0f;
+				} else {
+					const float x = 1.0f - cosI;
+					fresnel = r0 + (1.0f - r0) * x * x * x * x * x;
+				}
 
 				if (RandomFloat(seed) < fresnel) {
 					ray.direction = reflect(ray.direction, normal);
 				} else {
+					//TODO(Dan): Is this ray.orig modification necessary?
 					ray.origin = ray.origin - normal * 2.f * epsilon;
-					ray.direction = glm::refract(ray.direction, normal, n2 / n1);
+
+					const float cosT = sqrt(1.0f - sinT2);
+					ray.direction = n * ray.direction + (n * cosI - cosT) * normal;
 				}
 
 				if (!outside) {
@@ -514,7 +563,7 @@ __global__ void blit_onto_framebuffer(glm::vec4* blit_buffer) {
 cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene::GPUScene sceneData, RayQueue* ray_buffer, RayQueue* ray_buffer_next, ShadowQueue* shadow_queue) {
 	static bool first_time = true;
 	static bool reset_buffer = false;
-	static unsigned int frame = 0;
+	static unsigned int frame = 1;
 
 	if (first_time) {
 		first_time = false;
@@ -580,7 +629,12 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 
 	cuda(DeviceSynchronize());
 
+	//Frame is used as XORSHIFT seed, but we must ensure it's not 0
+	if (frame == UINT_MAX)
+		frame = 0;
+
 	frame++;
+
 	//hold_frame++;
 	last_pos = camera.position;
 	last_dir = camera.direction;
