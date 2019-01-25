@@ -178,7 +178,7 @@ __forceinline __device__ void computeOrthonormalBasisNaive(const glm::vec3& w, g
 	if (fabs(w.x) > .9) { /*If W is to close to X axis then pick Y*/
 		*u = glm::vec3{ 0.0f, 1.0f, 0.0f };
 	} else { /*Pick X axis*/
-		*u = glm::vec3{ 0.0f, 1.0f, 0.0f };
+		*u = glm::vec3{ 1.0f, 0.0f, 0.0f };
 	}
 	*u = normalize(cross(*u, w));
 	*v = cross(w, *u);
