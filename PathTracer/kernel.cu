@@ -276,7 +276,7 @@ __global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::
 		glm::vec3 directionToFocalPlane = camera_direction + normalized_i * camera_right + normalized_j * camera_up;
 		directionToFocalPlane = glm::normalize(directionToFocalPlane);
 
-		//Get the convergence point which is at focalDistance
+		//Get the convergence point which is at focalDistance)
 		//TODO(Dan): I currently multiply by 3 because I felt it would be easier for the ImGui slider.
 		// Fix this by modifying how slider works?
 		const int ImGui_slider_hack = 3.0f;
@@ -368,7 +368,26 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				const Sphere& object = spheres[ray.identifier];
 				normal = (ray.origin - object.position) / object.radius;
 				reflection_type = object.refl;
-				color = ray.direct * object.emmission;
+				if (ray.lastSpecular == true && ray.identifier == 6) {
+					color = object.emmission;
+					ray.bounces = MAX_BOUNCES;
+					color = glm::vec3(2.0, 2.0, 2.0);
+
+					const int rayIndex = ray.y * render_width + ray.x;
+					atomicAdd(&blit_buffer[rayIndex].r, color.r);
+					atomicAdd(&blit_buffer[rayIndex].g, color.g);
+					atomicAdd(&blit_buffer[rayIndex].b, color.b);
+					atomicAdd(&blit_buffer[rayIndex].a, 1);
+					continue;
+
+				} else if (ray.identifier == 6) {
+					color = glm::vec3(0.0f);
+					ray.direct = glm::vec3(0.0, 0.0f, 0.0f);
+					ray.bounces = MAX_BOUNCES;
+					//new_frame++;
+					//goto done;
+				}
+
 				if (reflection_type != REFR) {
 					ray.direct *= object.color;
 				}
@@ -393,18 +412,71 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 			case DIFF: {
 
 				// Generate new shadow ray
-				glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
-				float sunLight = dot(normal, sunSampleDir);
+				//glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
+				//float sunLight = dot(normal, sunSampleDir);
 
-				// < 0.f means sun is behind the surface
-				if (sunLight > 0.f) {
-					unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
-					shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.y * render_width + ray.x };
+				//// < 0.f means sun is behind the surface
+				//if (sunLight > 0.f) {
+				//	unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+				//	//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.y * render_width + ray.x };
+				//} else { //NEE Diffuse black scenes
+				//TODO(Dan): Hardcoded spheres[6] as only light source. Use light array.
+				if (ray.identifier == 6)
+					break;
+				float cosPhi = 2.0f * RandomFloat(seed) - 1.0f;
+				float sinPhi = std::sqrt(1.0f - cosPhi * cosPhi);
+				float theta = 2 * pi * RandomFloat(seed);
+
+				float x = spheres[6].position.x + spheres[6].radius * sinPhi * std::sinf(theta);
+				float y = spheres[6].position.y + spheres[6].radius * cosPhi;
+				float z = spheres[6].position.z + spheres[6].radius * sinPhi * std::cosf(theta);
+
+				glm::vec3 lightVector = glm::vec3(x, y, z) - ray.origin;
+				glm::vec3 nL = glm::normalize(glm::vec3(x, y, z) - spheres[6].position);
+				glm::vec3 lightDir = glm::normalize(lightVector);
+				float cosSurfaceToLight = glm::dot(normal, lightDir);
+				float cosLightToSurface = glm::dot(nL, -lightDir);
+
+				if (cosSurfaceToLight > 0 && cosLightToSurface > 0) {
+
+					//shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.y * render_width + ray.x };
+					ShadowQueue shadowRay;
+					shadowRay.origin = ray.origin;
+					shadowRay.direction = lightDir;
+
+					bool itIntersects = false;
+
+					//Ray could intersect triangle far away,
+					float t = 1e20;
+					sceneData.CUDACachedBVH.intersectSQ(shadowRay, t);
+
+					float d;
+					int hit_one = 0;
+					for (int i = NUM_SPHERES; i--;) {
+						//d = spheres[i].intersect(ray);
+						if ((d = spheres[i].intersect_simple(shadowRay)) && d < t) {
+							t = d;
+							hit_one = i;
+						}
+					}
+
+					if (hit_one == 6) {
+						float area = 4 * pi * spheres[6].radius * spheres[6].radius;
+						float solidAngle = (cosLightToSurface * area) / glm::dot(lightVector, lightVector);
+
+						color += spheres[6].emmission * ray.direct * solidAngle * inv_pi * cosSurfaceToLight;
+					}
 				}
 
 				if (ray.bounces < MAX_BOUNCES) {
+#if 0 // Stratified sampling.
+					glm::vec2 samples = Random2DStratifiedSample(seed); 
+					float r1 = 2.f * pi * samples.x;
+					float r2 = samples.y;
+#else
 					float r1 = 2.f * pi * RandomFloat(seed);
 					float r2 = RandomFloat(seed);
+#endif
 					float r2s = sqrt(r2);
 
 					// Transform to hemisphere coordinate system
@@ -507,7 +579,8 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 			}
 
 			//Russian roullete
-			float p = glm::min(1.0f,glm::max(ray.direct.z, glm::max(ray.direct.x, ray.direct.y)));
+			//float p = glm::min(1.0f, glm::max(ray.direct.z, glm::max(ray.direct.x, ray.direct.y)));
+			float p = 1.0f;
 			if (ray.bounces < MAX_BOUNCES && RandomFloat(seed) <= p) {
 				//Add rays into the next ray_buffer to be processed next frame
 				ray.bounces++;
@@ -521,7 +594,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 
 		} else { //NOTHING HIT
 			// Don't generate new extended ray. Directly add emisivity of sun/sky.
-			color += (ray.lastSpecular == false) ? ray.direct * sky(ray.direction) : ray.direct * sunsky(ray.direction);
+			//color += (ray.lastSpecular == false) ? ray.direct * sky(ray.direction) : ray.direct * sunsky(ray.direction);
 			new_frame++;
 		}
 
@@ -575,17 +648,19 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 	static bool first_time = true;
 	static bool reset_buffer = false;
 	static unsigned int frame = 1;
+	if (frame > 10)
+		return cudaSuccess;
 
 	if (first_time) {
 		first_time = false;
 
 		Sphere sphere_data[NUM_SPHERES] = { { 16.5, { 0, 40, 16.5f }, { 1, 1, 1 }, { 0, 0, 0 }, DIFF },
-											{ 16.5, { 40, 0, 16.5f }, { 0.5, 0.5, 0.06 }, { 0, 0, 0 }, REFR },
-											{ 16.5, { -40, 0, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, PHONG },
-											{ 16.5, { -40, -50, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, SPEC },
-											{ 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, { 0, 0, 0 }, PHONG },
+											{ 16.5, { 40, 0, 16.5f }, { 0.5, 0.5, 0.06 }, { 0, 0, 0 }, DIFF },
+											{ 16.5, { -40, 0, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, DIFF },
+											{ 16.5, { -40, -50, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, DIFF },
+											{ 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, { 0, 0, 0 }, DIFF },
 											{ 20, { 0, -80, 20 }, { 1.0, 0.0, 0.0 }, { 0, 0, 0 }, DIFF },
-											{ 30, { 0, -80, 120.0f }, { 0.0, 1.0, 0.0 }, { 2, 2, 2 }, DIFF } };
+											{ 8, { 0, -80, 120.0f }, { 0.0, 1.0, 0.0 }, { 1.5, 1.5, 1.5 }, DIFF } };
 		cudaMemcpyToSymbol(spheres, sphere_data, NUM_SPHERES * sizeof(Sphere));
 
 		float sun_angular = cos(sunSize * pi / 180.f);
@@ -631,7 +706,7 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 #else
 	extend<<<sm_cores * 8, 128>>>(ray_buffer, sceneData);
 	shade<<<sm_cores * 8, 128>>>(ray_buffer, ray_buffer_next, shadow_queue, sceneData, blit_buffer, frame);
-	connect<<<sm_cores * 8, 128>>>(shadow_queue, sceneData, blit_buffer);
+	//connect<<<sm_cores * 8, 128>>>(shadow_queue, sceneData, blit_buffer);
 #endif
 
 	dim3 threads = dim3(16, 16, 1);

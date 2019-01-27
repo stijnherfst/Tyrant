@@ -17,7 +17,7 @@ static void glfw_key_callback(GLFWwindow* window, int key, int scancode, int act
 }
 
 #ifdef PERFORMANCE_TEST
-	PerformanceMeasure performance;
+PerformanceMeasure performance;
 #endif
 
 int main(int argc, char* argv[]) {
@@ -95,7 +95,6 @@ int main(int argc, char* argv[]) {
 	printf("CUDA : %-24s (%2d)\n", props.name, props.multiProcessorCount);
 	sm_cores = props.multiProcessorCount;
 
-
 	cuda_interop interop;
 
 	int width, height;
@@ -107,9 +106,9 @@ int main(int argc, char* argv[]) {
 	Scene scene;
 	scene.Load("Data/castle.ply");
 
-	#ifdef PERFORMANCE_TEST
-		std::ofstream test_file("performance.txt");
-	#endif
+#ifdef PERFORMANCE_TEST
+	std::ofstream test_file("performance.txt");
+#endif
 
 	// Allocate ray queue buffer
 	RayQueue* ray_buffer_work;
@@ -150,8 +149,13 @@ int main(int argc, char* argv[]) {
 		if (done) {
 			break;
 		}
+
 #else
-		camera.handle_input(window, delta);
+		camera.position = glm::vec3{ 182.44f, -57.954f, 129.78f };
+		camera.horizontal_angle = -1.476f;
+		camera.vertical_angle = -0.398f;
+
+		//camera.handle_input(window, delta);
 #endif
 		camera.update();
 
@@ -178,8 +182,9 @@ int main(int argc, char* argv[]) {
 			ImGui::PlotHistogram("", frame_times.data(), frame_times.size(), 0, "Frametimes", 0, FLT_MAX, { 400, 100 });
 			ImGui::Text("X: %f, Y: %f, Z: %f", camera.position.x, camera.position.y, camera.position.z);
 			ImGui::Text("Hor: %f, Vert: %f", camera.horizontal_angle, camera.vertical_angle);
+			ImGui::Text("Sun X: %f Y: %f", sun_position.x, sun_position.y);
 			ImGui::SliderFloat("FocalDistance", &camera.focalDistance, 0.1, 100);
-			ImGui::SliderFloat("LensRadius", &camera.lensRadius, 0.01, 80,"%.3f",1.3);
+			ImGui::SliderFloat("LensRadius", &camera.lensRadius, 0.01, 80, "%.3f", 1.3);
 			//TODO(Dan): Backspace doesn't trigger. Manually need to call ImGui backend?
 			ImGui::InputFloat("Lens Rad", &camera.lensRadius);
 
