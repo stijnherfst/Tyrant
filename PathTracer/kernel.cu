@@ -292,8 +292,6 @@ __global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::
 	}
 }
 
-//#if BVH_DEBUG
-
 /// Execute "extend" step but compute ray color based on amount of BVH traversal steps and write to blit_buffer.
 __global__ void __launch_bounds__(128, 8) extend_debug_BVH(RayQueue* ray_buffer, Scene::GPUScene sceneData, glm::vec4* blit_buffer) {
 	while (true) {
@@ -325,7 +323,6 @@ __global__ void __launch_bounds__(128, 8) extend_debug_BVH(RayQueue* ray_buffer,
 		}
 	}
 }
-//#endif
 
 /// Advance the ray segments once
 __global__ void __launch_bounds__(128, 8) extend(RayQueue* ray_buffer, Scene::GPUScene sceneData) {
@@ -355,6 +352,9 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 
 		int new_frame = 0;
 		RayQueue& ray = ray_buffer[index];
+
+		//Each iteration we add color to the blit_buffer.
+		//Color can be non-zero if sun/sky or we're counting emisivity for different objects.
 		glm::vec3 color = glm::vec3(0.f);
 		glm::vec3 object_color;
 		unsigned int seed = (frame * ray.x * 147565741) * 720898027 * index;
@@ -449,7 +449,8 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 					ray.lastSpecular = true;
 					ray.direction = reflect(ray.direction, normal);
 				} else {
-					//TODO(Dan): Is this ray.orig modification necessary?
+					//Offset origin by twice the normal * epsilon amount, because we already offset it towards the normal once.
+					//Do this because we now want the origin to be below the normal.
 					ray.origin = ray.origin - normal * 2.f * epsilon;
 
 					const float cosT = sqrt(1.0f - sinT2);
@@ -505,9 +506,12 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 			}
 			}
 
-			if (ray.bounces < MAX_BOUNCES) {
+			//Russian roullete
+			float p = glm::min(1.0f,glm::max(ray.direct.z, glm::max(ray.direct.x, ray.direct.y)));
+			if (ray.bounces < MAX_BOUNCES && RandomFloat(seed) <= p) {
 				//Add rays into the next ray_buffer to be processed next frame
 				ray.bounces++;
+				ray.direct *= 1.0f / p;
 
 				unsigned primary_index = atomicAdd(&primary_ray_cnt, 1);
 				ray_buffer_next[primary_index] = ray;
@@ -515,12 +519,15 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				new_frame++;
 			}
 
-		} else {
-			// Don't generate new extended ray
+		} else { //NOTHING HIT
+			// Don't generate new extended ray. Directly add emisivity of sun/sky.
 			color += (ray.lastSpecular == false) ? ray.direct * sky(ray.direction) : ray.direct * sunsky(ray.direction);
 			new_frame++;
 		}
 
+		//Color is added every frame to buffer. However color can only be non-zero for sun/sky and if emmisive surface
+		//was hit.
+		//TODO(Dan): Perf increase if only add when != 0? How to interact with sky = black?
 		const int rayIndex = ray.y * render_width + ray.x;
 		atomicAdd(&blit_buffer[rayIndex].r, color.r);
 		atomicAdd(&blit_buffer[rayIndex].g, color.g);
