@@ -151,11 +151,11 @@ int main(int argc, char* argv[]) {
 		}
 
 #else
-		camera.position = glm::vec3{ 182.44f, -57.954f, 129.78f };
-		camera.horizontal_angle = -1.476f;
-		camera.vertical_angle = -0.398f;
+		//camera.position = glm::vec3{ 182.44f, -57.954f, 129.78f };
+		//camera.horizontal_angle = -1.476f;
+		//camera.vertical_angle = -0.398f;
 
-		//camera.handle_input(window, delta);
+		camera.handle_input(window, delta);
 #endif
 		camera.update();
 
