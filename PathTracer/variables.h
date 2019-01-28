@@ -27,8 +27,7 @@ struct RayQueue {
 	float distance;
 	int identifier;
 	int bounces;
-	int x;
-	int y;
+	int index;
 	GeometryType geometry_type = GeometryType::Triangle;
 	bool lastSpecular = true;
 };

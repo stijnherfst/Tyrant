@@ -288,7 +288,7 @@ __global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::
 
 		glm::vec3 direction = glm::normalize(convergencePoint - newOrigin);
 
-		ray_buffer[ray_index_buffer] = { newOrigin, direction, { 1, 1, 1 }, 0, 0, 0, x, y };
+		ray_buffer[ray_index_buffer] = { newOrigin, direction, { 1, 1, 1 }, 0, 0, 0, y * render_width + x };
 	}
 }
 
@@ -311,17 +311,16 @@ __global__ void __launch_bounds__(128, 8) extend_debug_BVH(RayQueue* ray_buffer,
 
 		//Determine colors
 
-		const int rayIndex = ray.y * render_width + ray.x;
 		glm::vec3 color = {};
 		int green = (0.0002f * traversals) * 255.99f;
 		green = green > 255 ? 255 : green;
-		blit_buffer[rayIndex].g = green;
-		blit_buffer[rayIndex].a = 1;
+		blit_buffer[ray.index].g = green;
+		blit_buffer[ray.index].a = 1;
 
 		if (traversals >= 70) { //Color very costly regions distinctly
 			int red = green;
-			blit_buffer[rayIndex].r = red;
-			blit_buffer[rayIndex].g = 0;
+			blit_buffer[ray.index].r = red;
+			blit_buffer[ray.index].g = 0;
 		}
 	}
 }
@@ -357,7 +356,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 		RayQueue& ray = ray_buffer[index];
 		glm::vec3 color = glm::vec3(0.f);
 		glm::vec3 object_color;
-		unsigned int seed = (frame * ray.x * 147565741) * 720898027 * index;
+		unsigned int seed = (frame * ray.index * 147565741) * 720898027 * index;
 		int reflection_type = DIFF;
 
 		if (ray.distance < VERY_FAR) {
@@ -399,7 +398,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				// < 0.f means sun is behind the surface
 				if (sunLight > 0.f) {
 					unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
-					shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.y * render_width + ray.x };
+					shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.index };
 				}
 
 				if (ray.bounces < MAX_BOUNCES) {
@@ -494,7 +493,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				sunLight = powf(sunLight, phongexponent);
 				if (sunLight > 0.f) {
 					unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
-					shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.y * render_width + ray.x };
+					shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.index };
 				}
 
 				ray.origin = ray.origin + w * epsilon; // scene size dependent
@@ -520,11 +519,10 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 			new_frame++;
 		}
 
-		const int rayIndex = ray.y * render_width + ray.x;
-		atomicAdd(&blit_buffer[rayIndex].r, color.r);
-		atomicAdd(&blit_buffer[rayIndex].g, color.g);
-		atomicAdd(&blit_buffer[rayIndex].b, color.b);
-		atomicAdd(&blit_buffer[rayIndex].a, new_frame);
+		atomicAdd(&blit_buffer[ray.index].r, color.r);
+		atomicAdd(&blit_buffer[ray.index].g, color.g);
+		atomicAdd(&blit_buffer[ray.index].b, color.b);
+		atomicAdd(&blit_buffer[ray.index].a, new_frame);
 	}
 }
 
