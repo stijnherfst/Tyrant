@@ -232,9 +232,6 @@ public:
 							//closestIntersection = intersection;
 							return true;
 						}
-						//if (intersection > epsilon) {
-						//	return true;
-						//}
 					}
 
 					if (toVisitOffset == 0)
