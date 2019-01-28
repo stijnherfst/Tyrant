@@ -52,6 +52,12 @@ int main(int argc, char* argv[]) {
 
 	glfwMakeContextCurrent(window);
 
+
+	// Center cursor
+	int w, h;
+	glfwGetWindowSize(window, &w, &h);
+	glfwSetCursorPos(window, w * 0.5, h * 0.5);
+
 	gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 
 	// ignore vsync
