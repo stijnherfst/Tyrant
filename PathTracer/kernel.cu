@@ -445,6 +445,7 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				}
 
 				if (RandomFloat(seed) < fresnel) {
+					ray.lastSpecular = true;
 					ray.direction = reflect(ray.direction, normal);
 				} else {
 					//TODO(Dan): Is this ray.orig modification necessary?
