@@ -213,8 +213,7 @@ public:
 	__device__ bool intersectSimple(ShadowQueue& ray, const float& closestAllowed) {
 		float closestIntersection = closestAllowed;
 
-		glm::vec3 invDir
-			= 1.f / ray.direction;
+		glm::vec3 invDir = 1.f / ray.direction;
 		int dirIsNeg[3] = { invDir.x < 0, invDir.y < 0, invDir.z < 0 };
 		// Follow ray through BVH nodes to find primitive intersections
 		int toVisitOffset = 0, currentNodeIndex = 0;
