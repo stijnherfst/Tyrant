@@ -168,7 +168,6 @@ __device__ inline bool intersect_scene_simple(ShadowQueue& ray, Scene::GPUScene 
 	for (int i = NUM_SPHERES; i--;) {
 		if ((d = spheres[i].intersect_simple(ray)) && (d + epsilon) < closestAllowed) {
 			return true;
-
 		}
 	}
 	return false;
@@ -515,31 +514,34 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				break;
 			}
 			case PHONG: {
-				// compute random perturbation of ideal reflection vector
-				// the higher the phong exponent, the closer the perturbed vector
-				// is to the ideal reflection direction
-				float phi = 2 * pi * RandomFloat(seed);
-				float r2 = RandomFloat(seed);
-				float phongexponent = 50;
-				float cosTheta = powf(1 - r2, 1.0f / (phongexponent + 1));
-				float sinTheta = sqrtf(1 - cosTheta * cosTheta);
+				glm::vec3 w;
+				glm::vec3 u, v;
+				glm::vec3 d;
+				float phongexponent = 40.0f;
+				do {
+					// compute random perturbation of ideal reflection vector
+					// the higher the phong exponent, the closer the perturbed vector
+					// is to the ideal reflection direction
+					float phi = 2 * pi * RandomFloat(seed);
+					float r2 = RandomFloat(seed);
+					float cosTheta = powf(1.0f - r2, 1.0f / (phongexponent + 1.0f));
+					float sinTheta = sqrtf(1.0f - cosTheta * cosTheta);
 
-				/* 
+					/* 
 					Create orthonormal basis uvw around reflection vector with 
 					hitpoint as origin w is ray direction for ideal reflection
 				 */
-				glm::vec3 w;
-				w = ray.direction - normal * 2.0f * dot(normal, ray.direction);
-				w = normalize(w);
+					w = ray.direction - normal * 2.0f * dot(normal, ray.direction);
+					w = normalize(w);
 
-				// Transform to hemisphere coordinate system
-				glm::vec3 u, v;
-				computeOrthonormalBasisNaive(w, &u, &v);
-				// Get sample on hemisphere
-				// compute cosine weighted random ray direction on hemisphere
+					// Transform to hemisphere coordinate system
+					computeOrthonormalBasisNaive(w, &u, &v);
+					// Get sample on hemisphere
+					// compute cosine weighted random ray direction on hemisphere
 
-				glm::vec3 d = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
-				d = normalize(d);
+					d = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
+					d = normalize(d);
+				} while (dot(d, normal) <= epsilon);
 
 				glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
 				float sunLight = dot(normal, sunSampleDir);
@@ -547,9 +549,12 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				//SunLight is cos of sampleDir to normal. For phong we weight it proportional to cos(theta) ^ phongExponent
 				if (RandomFloat(seed) < 0.5f) {
 					if (sunLight > 0.f) {
-						sunLight = powf(sunLight, phongexponent);
-						unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
-						shadowQueue[shadow_index] = { ray.origin, sunSampleDir, 2.0f * ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f),ray.index };
+						float phongCos = dot(sunSampleDir, w);
+						if (phongCos > epsilon) {
+							sunLight *= powf(phongCos, phongexponent);
+							unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+							shadowQueue[shadow_index] = { ray.origin, sunSampleDir, 2.0f * ray.direct * ((phongexponent + 2) * 0.5f * inv_pi) * (sun(sunSampleDir) * sunLight * 1E-5f), ray.index };
+						}
 					}
 				} else { // NEE Sample the light source in the scene
 					//TODO(Dan): Hardcoded spheres[6] as only light source. Use light array.
@@ -570,15 +575,18 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 					float cosLightToSurface = glm::dot(nL, -lightDir);
 
 					if (cosSurfaceToLight > 0 && cosLightToSurface > 0) {
-						cosSurfaceToLight = powf(cosSurfaceToLight, phongexponent);
-						float closestAllowed = glm::length(lightVector);
-						float area = 4 * pi * lightsource.radius * lightsource.radius;
-						float solidAngle = (cosLightToSurface * area) / glm::dot(lightVector, lightVector);
-						glm::vec3 shadowColor = lightsource.emmission * 2.0f * ray.direct * solidAngle * inv_pi * cosSurfaceToLight;
+						float phongCos = dot(lightDir, w);
+						if (phongCos > epsilon) {
+							phongCos = powf(phongCos, phongexponent);
+							float closestAllowed = glm::length(lightVector);
+							float area = 4.0f * pi * lightsource.radius * lightsource.radius;
+							float solidAngle = (cosLightToSurface * area) / glm::dot(lightVector, lightVector);
+							glm::vec3 shadowColor = lightsource.emmission * 2.0f * ray.direct * solidAngle * (phongexponent + 2) * 0.5f * inv_pi * phongCos * cosSurfaceToLight;
 
-						unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+							unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
 
-						shadowQueue[shadow_index] = { ray.origin, lightDir, shadowColor, ray.index, closestAllowed };
+							shadowQueue[shadow_index] = { ray.origin, lightDir, shadowColor, ray.index, closestAllowed };
+						}
 					}
 				}
 				ray.origin = ray.origin + w * epsilon; // scene size dependent
@@ -665,11 +673,11 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 
 		Sphere sphere_data[NUM_SPHERES] = { { 16.5, { 0, 40, 16.5f }, { 1, 1, 1 }, { 0, 0, 0 }, DIFF },
 											{ 16.5, { 40, 0, 16.5f }, { 0.5, 0.5, 0.06 }, { 0, 0, 0 }, REFR },
-											{ 16.5, { -40, 0, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, PHONG },
+											{ 16.5, { -40, -50, 36.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, PHONG },
 											{ 16.5, { -40, -50, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, SPEC },
-											{ 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, { 0, 0, 0 }, PHONG },
+											{ 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, { 0, 0, 0 }, DIFF },
 											{ 20, { 0, -80, 20 }, { 1.0, 0.0, 0.0 }, { 0, 0, 0 }, DIFF },
-											{ 9, { 0, -80, 120.0f }, { 0.0, 1.0, 0.0 }, { 3, 3, 3}, LIGHT } };
+											{ 9, { 0, -80, 120.0f }, { 0.0, 1.0, 0.0 }, { 3, 3, 3 }, LIGHT } };
 		cudaMemcpyToSymbol(spheres, sphere_data, NUM_SPHERES * sizeof(Sphere));
 
 		float sun_angular = cos(sunSize * pi / 180.f);
