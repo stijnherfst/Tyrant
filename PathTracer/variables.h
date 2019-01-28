@@ -39,6 +39,7 @@ struct ShadowQueue {
 	glm::vec3 direction;
 	glm::vec3 color;
 	int buffer_index;
+	float closestDistance = 1e20f;
 };
 
 const unsigned int ray_queue_buffer_size = 1'048'576 * 2;
