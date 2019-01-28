@@ -67,7 +67,8 @@ __device__ glm::vec2 Random2DStratifiedSample(unsigned int& seed) {
 enum Refl_t { DIFF,
 			  SPEC,
 			  REFR,
-			  PHONG };
+			  PHONG,
+			  LIGHT };
 
 inline __host__ __device__ float dot(const glm::vec4& v1, const glm::vec3& v2) {
 	return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
@@ -158,15 +159,18 @@ __device__ inline bool intersect_scene_DEBUG(RayQueue& ray, Scene::GPUScene scen
 	}
 	return ray.distance < VERY_FAR;
 }
-__device__ inline bool intersect_scene_simple(ShadowQueue& ray, Scene::GPUScene sceneData) {
+__device__ inline bool intersect_scene_simple(ShadowQueue& ray, Scene::GPUScene sceneData, const float& closestAllowed) {
+	float d;
+
+	if (sceneData.CUDACachedBVH.intersectSimple(ray, closestAllowed))
+		return true;
+
 	for (int i = NUM_SPHERES; i--;) {
-		float d = spheres[i].intersect_simple(ray);
-		if (d != 0) {
+		if ((d = spheres[i].intersect_simple(ray)) && (d + epsilon) < closestAllowed) {
 			return true;
 		}
 	}
-
-	return sceneData.CUDACachedBVH.intersectSimple(ray);
+	return false;
 }
 
 /*
@@ -200,7 +204,7 @@ __device__ glm::vec2 ConcentricSampleDisk(const glm::vec2& u) {
 		r = uOffset.y;
 		theta = pi / 2 - pi / 4 * (uOffset.x / uOffset.y);
 	}
-	return r * glm::vec2(std::cos(theta), std::sin(theta));
+	return r * glm::vec2(std::cosf(theta), std::sinf(theta));
 }
 
 //Number of rays still active after the shade kernel.
@@ -276,7 +280,7 @@ __global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::
 		glm::vec3 directionToFocalPlane = camera_direction + normalized_i * camera_right + normalized_j * camera_up;
 		directionToFocalPlane = glm::normalize(directionToFocalPlane);
 
-		//Get the convergence point which is at focalDistance
+		//Get the convergence point which is at focalDistance)
 		//TODO(Dan): I currently multiply by 3 because I felt it would be easier for the ImGui slider.
 		// Fix this by modifying how slider works?
 		const int ImGui_slider_hack = 3.0f;
@@ -291,8 +295,6 @@ __global__ void primary_rays(RayQueue* ray_buffer, glm::vec3 camera_right, glm::
 		ray_buffer[ray_index_buffer] = { newOrigin, direction, { 1, 1, 1 }, 0, 0, 0, y * render_width + x };
 	}
 }
-
-//#if BVH_DEBUG
 
 /// Execute "extend" step but compute ray color based on amount of BVH traversal steps and write to blit_buffer.
 __global__ void __launch_bounds__(128, 8) extend_debug_BVH(RayQueue* ray_buffer, Scene::GPUScene sceneData, glm::vec4* blit_buffer) {
@@ -324,7 +326,6 @@ __global__ void __launch_bounds__(128, 8) extend_debug_BVH(RayQueue* ray_buffer,
 		}
 	}
 }
-//#endif
 
 /// Advance the ray segments once
 __global__ void __launch_bounds__(128, 8) extend(RayQueue* ray_buffer, Scene::GPUScene sceneData) {
@@ -354,6 +355,9 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 
 		int new_frame = 0;
 		RayQueue& ray = ray_buffer[index];
+
+		//Each iteration we add color to the blit_buffer.
+		//Color can be non-zero if sun/sky or we're counting emisivity for different objects.
 		glm::vec3 color = glm::vec3(0.f);
 		glm::vec3 object_color;
 		unsigned int seed = (frame * ray.index * 147565741) * 720898027 * index;
@@ -367,8 +371,8 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				const Sphere& object = spheres[ray.identifier];
 				normal = (ray.origin - object.position) / object.radius;
 				reflection_type = object.refl;
-				color = ray.direct * object.emmission;
-				if (reflection_type != REFR) {
+
+				if (reflection_type != REFR && reflection_type != LIGHT) {
 					ray.direct *= object.color;
 				}
 				object_color = object.color;
@@ -385,25 +389,73 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 			//Prevent self-intersection
 			ray.origin += normal * epsilon;
 
+			//Handle light case before resetting previous ray specular
+			if (reflection_type == LIGHT) {
+				if (ray.lastSpecular == true) {
+					//color = spheres[ray.identifier].emmission;
+					color = ray.direct * spheres[ray.identifier].emmission;
+				} else {
+					color = glm::vec3(0.0f);
+					ray.direct = glm::vec3(0.0, 0.0f, 0.0f);
+				}
+			}
 			//Initialize lastSpecular to false before each reflection_type.
-			//TODO(Dan): What happens if Phong exponent is huge? Then phong is specular as well...
 			ray.lastSpecular = false;
 			switch (reflection_type) {
+			case LIGHT: {
+				break;
+			}
 			case DIFF: {
-
 				// Generate new shadow ray
 				glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
 				float sunLight = dot(normal, sunSampleDir);
 
 				// < 0.f means sun is behind the surface
-				if (sunLight > 0.f) {
-					unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
-					shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.index };
+				if (RandomFloat(seed) < 0.5f) { // NEE sample the sun
+					if (sunLight > 0.f) {
+						unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+						shadowQueue[shadow_index] = { ray.origin, sunSampleDir, 2.0f * ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.index };
+					}
+				} else { // NEE Sample the light source in the scene
+					//TODO(Dan): Hardcoded spheres[6] as only light source. Use light array.
+					Sphere& lightsource = spheres[6];
+
+					float cosPhi = 2.0f * RandomFloat(seed) - 1.0f;
+					float sinPhi = std::sqrt(1.0f - cosPhi * cosPhi);
+					float theta = 2.0f * pi * RandomFloat(seed);
+
+					float x = lightsource.position.x + lightsource.radius * sinPhi * std::sinf(theta);
+					float y = lightsource.position.y + lightsource.radius * cosPhi;
+					float z = lightsource.position.z + lightsource.radius * sinPhi * std::cosf(theta);
+
+					glm::vec3 lightVector = glm::vec3(x, y, z) - ray.origin;
+					glm::vec3 nL = glm::normalize(glm::vec3(x, y, z) - lightsource.position);
+					glm::vec3 lightDir = glm::normalize(lightVector);
+					float cosSurfaceToLight = glm::dot(normal, lightDir);
+					float cosLightToSurface = glm::dot(nL, -lightDir);
+
+					if (cosSurfaceToLight > 0 && cosLightToSurface > 0) {
+
+						float closestAllowed = glm::length(lightVector);
+						float area = 4 * pi * lightsource.radius * lightsource.radius;
+						float solidAngle = (cosLightToSurface * area) / glm::dot(lightVector, lightVector);
+						glm::vec3 shadowColor = lightsource.emmission * 2.0f * ray.direct * solidAngle * inv_pi * cosSurfaceToLight;
+
+						unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+
+						shadowQueue[shadow_index] = { ray.origin, lightDir, shadowColor, ray.index, closestAllowed };
+					}
 				}
 
 				if (ray.bounces < MAX_BOUNCES) {
+#if 0 // Stratified sampling.
+					glm::vec2 samples = Random2DStratifiedSample(seed); 
+					float r1 = 2.f * pi * samples.x;
+					float r2 = samples.y;
+#else
 					float r1 = 2.f * pi * RandomFloat(seed);
 					float r2 = RandomFloat(seed);
+#endif
 					float r2s = sqrt(r2);
 
 					// Transform to hemisphere coordinate system
@@ -448,7 +500,8 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 					ray.lastSpecular = true;
 					ray.direction = reflect(ray.direction, normal);
 				} else {
-					//TODO(Dan): Is this ray.orig modification necessary?
+					//Offset origin by twice the normal * epsilon amount, because we already offset it towards the normal once.
+					//Do this because we now want the origin to be below the normal.
 					ray.origin = ray.origin - normal * 2.f * epsilon;
 
 					const float cosT = sqrt(1.0f - sinT2);
@@ -461,42 +514,81 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				break;
 			}
 			case PHONG: {
-				// compute random perturbation of ideal reflection vector
-				// the higher the phong exponent, the closer the perturbed vector
-				// is to the ideal reflection direction
-				float phi = 2 * pi * RandomFloat(seed);
-				float r2 = RandomFloat(seed);
-				float phongexponent = 50;
-				float cosTheta = powf(1 - r2, 1.0f / (phongexponent + 1));
-				float sinTheta = sqrtf(1 - cosTheta * cosTheta);
+				glm::vec3 w;
+				glm::vec3 u, v;
+				glm::vec3 d;
+				float phongexponent = 40.0f;
+				do {
+					// compute random perturbation of ideal reflection vector
+					// the higher the phong exponent, the closer the perturbed vector
+					// is to the ideal reflection direction
+					float phi = 2 * pi * RandomFloat(seed);
+					float r2 = RandomFloat(seed);
+					float cosTheta = powf(1.0f - r2, 1.0f / (phongexponent + 1.0f));
+					float sinTheta = sqrtf(1.0f - cosTheta * cosTheta);
 
-				/* 
+					/* 
 					Create orthonormal basis uvw around reflection vector with 
 					hitpoint as origin w is ray direction for ideal reflection
 				 */
-				glm::vec3 w;
-				w = ray.direction - normal * 2.0f * dot(normal, ray.direction);
-				w = normalize(w);
+					w = ray.direction - normal * 2.0f * dot(normal, ray.direction);
+					w = normalize(w);
 
-				// Transform to hemisphere coordinate system
-				glm::vec3 u, v;
-				computeOrthonormalBasisNaive(w, &u, &v);
-				// Get sample on hemisphere
-				// compute cosine weighted random ray direction on hemisphere
+					// Transform to hemisphere coordinate system
+					computeOrthonormalBasisNaive(w, &u, &v);
+					// Get sample on hemisphere
+					// compute cosine weighted random ray direction on hemisphere
 
-				glm::vec3 d = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
-				d = normalize(d);
+					d = u * cosf(phi) * sinTheta + v * sinf(phi) * sinTheta + w * cosTheta;
+					d = normalize(d);
+				} while (dot(d, normal) <= epsilon);
 
 				glm::vec3 sunSampleDir = getConeSample(sunDirection, 1.0f - sunAngularDiameterCos, seed);
 				float sunLight = dot(normal, sunSampleDir);
 
 				//SunLight is cos of sampleDir to normal. For phong we weight it proportional to cos(theta) ^ phongExponent
-				sunLight = powf(sunLight, phongexponent);
-				if (sunLight > 0.f) {
-					unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
-					shadowQueue[shadow_index] = { ray.origin, sunSampleDir, ray.direct * (sun(sunSampleDir) * sunLight * 1E-5f), ray.index };
-				}
+				if (RandomFloat(seed) < 0.5f) {
+					if (sunLight > 0.f) {
+						float phongCos = dot(sunSampleDir, w);
+						if (phongCos > epsilon) {
+							sunLight *= powf(phongCos, phongexponent);
+							unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+							shadowQueue[shadow_index] = { ray.origin, sunSampleDir, 2.0f * ray.direct * ((phongexponent + 2) * 0.5f * inv_pi) * (sun(sunSampleDir) * sunLight * 1E-5f), ray.index };
+						}
+					}
+				} else { // NEE Sample the light source in the scene
+					//TODO(Dan): Hardcoded spheres[6] as only light source. Use light array.
+					Sphere& lightsource = spheres[6];
 
+					float cosPhi = 2.0f * RandomFloat(seed) - 1.0f;
+					float sinPhi = std::sqrt(1.0f - cosPhi * cosPhi);
+					float theta = 2.0f * pi * RandomFloat(seed);
+
+					float x = lightsource.position.x + lightsource.radius * sinPhi * std::sinf(theta);
+					float y = lightsource.position.y + lightsource.radius * cosPhi;
+					float z = lightsource.position.z + lightsource.radius * sinPhi * std::cosf(theta);
+
+					glm::vec3 lightVector = glm::vec3(x, y, z) - ray.origin;
+					glm::vec3 nL = glm::normalize(glm::vec3(x, y, z) - lightsource.position);
+					glm::vec3 lightDir = glm::normalize(lightVector);
+					float cosSurfaceToLight = glm::dot(normal, lightDir);
+					float cosLightToSurface = glm::dot(nL, -lightDir);
+
+					if (cosSurfaceToLight > 0 && cosLightToSurface > 0) {
+						float phongCos = dot(lightDir, w);
+						if (phongCos > epsilon) {
+							phongCos = powf(phongCos, phongexponent);
+							float closestAllowed = glm::length(lightVector);
+							float area = 4.0f * pi * lightsource.radius * lightsource.radius;
+							float solidAngle = (cosLightToSurface * area) / glm::dot(lightVector, lightVector);
+							glm::vec3 shadowColor = lightsource.emmission * 2.0f * ray.direct * solidAngle * (phongexponent + 2) * 0.5f * inv_pi * phongCos * cosSurfaceToLight;
+
+							unsigned shadow_index = atomicAdd(&shadow_ray_cnt, 1);
+
+							shadowQueue[shadow_index] = { ray.origin, lightDir, shadowColor, ray.index, closestAllowed };
+						}
+					}
+				}
 				ray.origin = ray.origin + w * epsilon; // scene size dependent
 				ray.direction = d;
 
@@ -504,9 +596,13 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 			}
 			}
 
-			if (ray.bounces < MAX_BOUNCES) {
+			//Russian roullete
+			float p = glm::min(1.0f, glm::max(ray.direct.z, glm::max(ray.direct.x, ray.direct.y)));
+			//float p = 1.0f;
+			if (ray.bounces < MAX_BOUNCES && p > (0 + epsilon) && RandomFloat(seed) <= p) {
 				//Add rays into the next ray_buffer to be processed next frame
 				ray.bounces++;
+				ray.direct *= 1.0f / p;
 
 				unsigned primary_index = atomicAdd(&primary_ray_cnt, 1);
 				ray_buffer_next[primary_index] = ray;
@@ -514,12 +610,15 @@ __global__ void __launch_bounds__(128, 8) shade(RayQueue* ray_buffer, RayQueue* 
 				new_frame++;
 			}
 
-		} else {
-			// Don't generate new extended ray
+		} else { //NOTHING HIT
+			// Don't generate new extended ray. Directly add emisivity of sun/sky.
 			color += (ray.lastSpecular == false) ? ray.direct * sky(ray.direction) : ray.direct * sunsky(ray.direction);
 			new_frame++;
 		}
 
+		//Color is added every frame to buffer. However color can only be non-zero for sun/sky and if emmisive surface
+		//was hit.
+		//TODO(Dan): Perf increase if only add when != 0? How to interact with sky = black?
 		atomicAdd(&blit_buffer[ray.index].r, color.r);
 		atomicAdd(&blit_buffer[ray.index].g, color.g);
 		atomicAdd(&blit_buffer[ray.index].b, color.b);
@@ -538,7 +637,7 @@ __global__ void __launch_bounds__(128, 8) connect(ShadowQueue* queue, Scene::GPU
 
 		ShadowQueue& ray = queue[index];
 
-		if (!intersect_scene_simple(ray, sceneData)) {
+		if (!intersect_scene_simple(ray, sceneData, ray.closestDistance)) {
 			atomicAdd(&blit_buffer[ray.buffer_index].r, ray.color.r);
 			atomicAdd(&blit_buffer[ray.buffer_index].g, ray.color.g);
 			atomicAdd(&blit_buffer[ray.buffer_index].b, ray.color.b);
@@ -566,17 +665,19 @@ cudaError launch_kernels(cudaArray_const_t array, glm::vec4* blit_buffer, Scene:
 	static bool first_time = true;
 	static bool reset_buffer = false;
 	static unsigned int frame = 1;
+	//if (frame > 10)
+	//return cudaSuccess;
 
 	if (first_time) {
 		first_time = false;
 
 		Sphere sphere_data[NUM_SPHERES] = { { 16.5, { 0, 40, 16.5f }, { 1, 1, 1 }, { 0, 0, 0 }, DIFF },
 											{ 16.5, { 40, 0, 16.5f }, { 0.5, 0.5, 0.06 }, { 0, 0, 0 }, REFR },
-											{ 16.5, { -40, 0, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, PHONG },
+											{ 16.5, { -40, -50, 36.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, PHONG },
 											{ 16.5, { -40, -50, 16.5f }, { 0.6, 0.5, 0.4 }, { 0, 0, 0 }, SPEC },
-											{ 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, { 0, 0, 0 }, PHONG },
+											{ 1e4f, { 0, 0, -1e4f - 20 }, { 1, 1, 1 }, { 0, 0, 0 }, DIFF },
 											{ 20, { 0, -80, 20 }, { 1.0, 0.0, 0.0 }, { 0, 0, 0 }, DIFF },
-											{ 30, { 0, -80, 120.0f }, { 0.0, 1.0, 0.0 }, { 2, 2, 2 }, DIFF } };
+											{ 9, { 0, -80, 120.0f }, { 0.0, 1.0, 0.0 }, { 3, 3, 3 }, LIGHT } };
 		cudaMemcpyToSymbol(spheres, sphere_data, NUM_SPHERES * sizeof(Sphere));
 
 		float sun_angular = cos(sunSize * pi / 180.f);

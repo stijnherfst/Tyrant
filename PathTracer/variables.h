@@ -1,12 +1,13 @@
 #pragma once
 
 constexpr static float pi = 3.1415926535897932f;
+constexpr static float inv_pi = 1.0f / pi;
 
-constexpr static unsigned window_width = 1920;
-constexpr static unsigned window_height = 1080;
+constexpr static unsigned window_width = 720;
+constexpr static unsigned window_height = 720;
 
-constexpr static unsigned render_width = 1920;
-constexpr static unsigned render_height = 1080;
+constexpr static unsigned render_width = 720;
+constexpr static unsigned render_height = 720;
 
 constexpr static int bvh_stack_size = 32;
 
@@ -37,6 +38,7 @@ struct ShadowQueue {
 	glm::vec3 direction;
 	glm::vec3 color;
 	int buffer_index;
+	float closestDistance = 1e20f;
 };
 
 const unsigned int ray_queue_buffer_size = 1'048'576 * 2;

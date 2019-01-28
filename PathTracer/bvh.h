@@ -42,7 +42,6 @@ Thus it is now less general, but simpler and faster to build.
 */
 #pragma once
 
-
 enum class PartitionAlgorithm { Middle,
 								EqualCounts,
 								SAH };
@@ -162,7 +161,7 @@ public:
 	}
 
 	//Execute normal intersection but also calcualte number of ray traversals for each ray.
-		__device__ bool intersect_debug(RayQueue& ray, int *traversals) {
+	__device__ bool intersect_debug(RayQueue& ray, int* traversals) {
 		bool hit = false;
 		glm::vec3 invDir = 1.f / ray.direction;
 		int dirIsNeg[3] = { invDir.x < 0, invDir.y < 0, invDir.z < 0 };
@@ -210,9 +209,9 @@ public:
 	}
 
 	/// Intersects the ray with the BVH
-	/// Fpor shadow rays we only really care if it hits anything at all 
-	__device__ bool intersectSimple(ShadowQueue& ray) {
-		float closestIntersection = 1e20f;
+	/// For shadow rays we only really care if it hits anything at all
+	__device__ bool intersectSimple(ShadowQueue& ray, const float& closestAllowed) {
+		float closestIntersection = closestAllowed;
 
 		glm::vec3 invDir = 1.f / ray.direction;
 		int dirIsNeg[3] = { invDir.x < 0, invDir.y < 0, invDir.z < 0 };
@@ -227,7 +226,9 @@ public:
 					// LEAF
 					for (int i = 0; i < node->primitiveCount; ++i) {
 						float intersection = primitives[node->primitiveOffset + i].intersect(ray.origin, ray.direction);
-						if (intersection > epsilon) {
+						if (intersection > epsilon && ((closestIntersection - intersection) > epsilon)) {
+							//Once we've found a closer intersection than the one we accepted, return true
+							//closestIntersection = intersection;
 							return true;
 						}
 					}
